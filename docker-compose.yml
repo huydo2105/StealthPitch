@@ -1,0 +1,37 @@
+# ── StealthPitch ─── Docker Compose for Phala Network dstack ────────
+# Deploy this file via the Phala dstack dashboard or CLI.
+# The dstack.sock volume mount is REQUIRED for TEE attestation.
+# ────────────────────────────────────────────────────────────────────
+
+version: "3.8"
+
+services:
+  stealthpitch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stealthpitch-tee
+    restart: unless-stopped
+    ports:
+      - "80:8501"
+    volumes:
+      # ── CRITICAL: Phala dstack TEE socket ──────────────────────
+      # This unix socket connects the container to the host's
+      # Trusted Execution Environment (Intel TDX / AMD SEV).
+      # Without it, remote attestation quotes cannot be fetched.
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      # Persistent vector database across container restarts
+      - chroma_data:/app/chroma_db
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    env_file:
+      - .env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  chroma_data:
+    driver: local

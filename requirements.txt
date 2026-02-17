@@ -1,0 +1,10 @@
+streamlit>=1.31.0
+langchain>=0.3.19
+langchain-chroma
+langchain-community>=0.3.16
+google-genai
+langchain-text-splitters>=0.3.6
+chromadb>=0.4.24
+pypdf>=4.2.0
+python-dotenv>=1.0.0
+pysqlite3-binary>=0.5.2
