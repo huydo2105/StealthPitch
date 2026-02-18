@@ -19,7 +19,7 @@ import asyncio
 import json
 
 import rag_engine
-import tee_simulator
+import tee_manager
 
 # ── App ──────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -227,6 +227,6 @@ async def chat_stream(request: ChatRequest):
 async def get_attestation():
     """Return TEE attestation quote and health status."""
     return AttestationResponse(
-        quote=tee_simulator.get_tdx_quote(),
-        health=tee_simulator.get_tee_health(),
+        quote=tee_manager.get_tdx_quote(),
+        health=tee_manager.get_tee_health(),
     )
