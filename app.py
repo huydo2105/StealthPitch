@@ -70,34 +70,53 @@ section[data-testid="stSidebar"] > div:first-child {
     padding: 0.75rem 0.5rem;
 }
 
-/* Hide default radio buttons completely */
-section[data-testid="stSidebar"] .stRadio > div {
-    flex-direction: column;
-    gap: 2px;
+/* ══════════════════════════════════════════════════════════
+   SIDEBAR — ChatGPT-style (No Radio Bullets)
+   ══════════════════════════════════════════════════════════ */
+section[data-testid="stSidebar"] {
+    background: #171717; /* Check if user wants #212121 or darker */
+    border-right: none;
+    width: 260px !important;
 }
-section[data-testid="stSidebar"] .stRadio > div > label {
-    background: transparent;
-    border-radius: 8px;
-    padding: 0.6rem 0.75rem;
-    margin: 0;
-    color: #ececec !important;
-    font-size: 0.9rem;
-    font-weight: 400;
-    cursor: pointer;
-    transition: background 0.12s;
-    border: none !important;
-}
-section[data-testid="stSidebar"] .stRadio > div > label:hover {
-    background: #2f2f2f;
-}
-/* Active radio item */
-section[data-testid="stSidebar"] .stRadio > div > label[data-checked="true"],
-section[data-testid="stSidebar"] .stRadio > div [data-testid="stMarkdownContainer"] {
-    color: #ffffff !important;
+section[data-testid="stSidebar"] > div:first-child {
+    padding: 0.75rem 0.5rem;
 }
 
-section[data-testid="stSidebar"] .stRadio > label {
+/* Hide the default radio circle/bullet completely */
+section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-of-type {
     display: none !important;
+}
+
+/* Style the label container to look like a navigational row */
+section[data-testid="stSidebar"] div[role="radiogroup"] > label {
+    padding: 0.5rem 0.75rem !important;
+    border-radius: 6px !important;
+    margin-bottom: 2px !important;
+    transition: background 0.1s ease !important;
+    cursor: pointer !important;
+    border: none !important;
+    width: 100% !important;
+    display: flex !important;
+}
+
+/* Hover state */
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+    background: #212121 !important;
+}
+
+/* Selected state (ChatGPT style: distinct light gray background) */
+section[data-testid="stSidebar"] div[role="radiogroup"] > label[data-checked="true"] {
+    background: #2f2f2f !important;
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label[data-checked="true"] p {
+    color: #ffffff !important;
+    font-weight: 500 !important;
+}
+
+/* Non-selected text color */
+section[data-testid="stSidebar"] div[role="radiogroup"] p {
+    color: #ececec !important;
+    font-size: 0.9rem !important;
 }
 
 /* Sidebar divider */
@@ -224,25 +243,26 @@ h1, h2, h3, h4, .page-title {
 /* Chat input — floating centered pill */
 [data-testid="stChatInput"] {
     border-top: none !important;
-    padding: 0.5rem 0 1rem !important;
+    padding: 1rem 0 1.5rem !important; /* increased padding */
     background: transparent !important;
 }
 [data-testid="stChatInput"] > div {
     background: #2f2f2f !important;
-    border: 1px solid #424242 !important;
+    border: 1px solid #6b7280 !important; /* Lighter border for visibility */
     border-radius: 26px !important;
     padding: 0.15rem 0.15rem 0.15rem 0.5rem !important;
     max-width: 720px;
     margin: 0 auto;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 [data-testid="stChatInput"] textarea {
     background: transparent !important;
     border: none !important;
     color: #ececec !important;
+    caret-color: #ececec !important;
     border-radius: 24px !important;
     padding: 0.6rem 0.75rem !important;
-    font-size: 0.92rem !important;
+    font-size: 0.95rem !important;
     min-height: 24px !important;
     resize: none !important;
 }
@@ -267,20 +287,66 @@ h1, h2, h3, h4, .page-title {
 }
 
 /* ══════════════════════════════════════════════════════════
+   CHAT INPUT CONTAINER (Fix White Bar - Final)
+   ══════════════════════════════════════════════════════════ */
+/* Target specific Emotion classes found in debugging */
+div[class*="st-emotion-cache-uhkwx6"],
+div[class*="ea3mdgi6"] {
+    background-color: transparent !important;
+}
+
+/* Generic bottom container transparency */
+div[data-testid="stBottomBlockContainer"] {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Use :has() to target the parent of the input no matter the ID */
+div:has(> [data-testid="stChatInput"]),
+div:has(> div > [data-testid="stChatInput"]) {
+    background-color: transparent !important;
+    background: transparent !important;
+}
+
+/* Ensure children of bottom container are transparent */
+div[data-testid="stBottomBlockContainer"] > div,
+div[data-testid="stBottomBlockContainer"] > div > div {
+    background: transparent !important;
+}
+
+/* Restore the pill background */
+[data-testid="stChatInput"] > div {
+    background: #2f2f2f !important;
+    border: 1px solid #6b7280 !important; /* Lighter border */
+    border-radius: 26px !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+/* Restore send button */
+[data-testid="stChatInput"] button {
+    background: #ececec !important;
+    border: none !important;
+}
+[data-testid="stChatInput"] button:hover {
+    background: #ffffff !important;
+}
+
+/* ══════════════════════════════════════════════════════════
    BUTTONS
    ══════════════════════════════════════════════════════════ */
 .stButton > button {
-    background: #ffffff !important;
-    color: #171717 !important;
-    border: none !important;
+    background: #2f2f2f !important;
+    color: #ececec !important;
+    border: 1px solid #404040 !important;
     border-radius: 8px !important;
     padding: 0.55rem 1.25rem !important;
-    font-weight: 600 !important;
+    font-weight: 500 !important;
     font-size: 0.88rem !important;
-    transition: opacity 0.15s !important;
+    transition: all 0.15s !important;
 }
 .stButton > button:hover {
-    opacity: 0.85 !important;
+    background: #404040 !important;
+    border-color: #555555 !important;
+    color: #ffffff !important;
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -512,20 +578,6 @@ if page == "🔒  Founder Vault":
     )
 
     if uploaded:
-        # Show file list
-        st.markdown('<div class="info-card">', unsafe_allow_html=True)
-        for f in uploaded:
-            size_kb = f.size // 1024
-            st.markdown(
-                f'<div style="display:flex; justify-content:space-between; align-items:center; '
-                f'padding:0.4rem 0; border-bottom:1px solid #303030">'
-                f'<span style="color:#ececec; font-size:0.9rem">📄 {f.name}</span>'
-                f'<span style="color:#8e8e8e; font-size:0.8rem; font-family:JetBrains Mono,monospace">'
-                f'{size_kb} KB</span></div>',
-                unsafe_allow_html=True,
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
-
         if st.button("🔒  Encrypt & Embed", use_container_width=True):
             tmp_paths = []
             for f in uploaded:
