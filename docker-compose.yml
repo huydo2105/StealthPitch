@@ -1,31 +1,46 @@
 # ── StealthPitch ─── Docker Compose for Phala Network dstack ────────
-# Deploy this file via the Phala dstack dashboard or CLI.
+# Multi-service setup: FastAPI backend + Next.js frontend
 # The dstack.sock volume mount is REQUIRED for TEE attestation.
 # ────────────────────────────────────────────────────────────────────
 
 version: "3.8"
 
 services:
-  stealthpitch:
+  backend:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
-    container_name: stealthpitch-tee
+    container_name: stealthpitch-backend
     restart: unless-stopped
     ports:
-      - "80:8501"
+      - "8000:8000"
     volumes:
       # ── CRITICAL: Phala dstack TEE socket ──────────────────────
-      # This unix socket connects the container to the host's
-      # Trusted Execution Environment (Intel TDX / AMD SEV).
-      # Without it, remote attestation quotes cannot be fetched.
       - /var/run/dstack.sock:/var/run/dstack.sock
-      # Persistent vector database across container restarts
+      # Persistent vector database
       - chroma_data:/app/chroma_db
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     env_file:
       - .env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: stealthpitch-frontend
+    restart: unless-stopped
+    ports:
+      - "80:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      - backend
     logging:
       driver: json-file
       options:

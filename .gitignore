@@ -1,3 +1,16 @@
-/venv
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+
+# Environment
 .env
-/chroma_db
+backend/.env
+
+# Build
+frontend/.next/
+frontend/out/
+
+# Data
+chroma_db/
+*.pyc

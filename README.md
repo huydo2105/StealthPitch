@@ -1,41 +1,120 @@
-# StealthPitch MVP — TEE-Based AI Due Diligence Agent
+# 🔐 StealthPitch
 
-A production-ready MVP for the Shape Rotator Virtual Hackathon (Bonus Track). This agent runs inside a Phala Network `dstack` Confidential Virtual Machine (CVM), enforcing strict NDA compliance via Gemini 2.5 Flash and Intel TDX attestation.
+**Confidential AI Due-Diligence Agent** powered by Trusted Execution Environments (TEE).
 
-## 🚀 Key Features
+StealthPitch lets founders share proprietary documents inside a hardware-encrypted enclave. Investors can query the AI agent under NDA constraints — raw IP is never disclosed.
 
-*   **🔒 Founder Vault:** Securely upload & embed confidential documents (PDF/TXT) into TEE memory (never touches disk unencrypted).
-*   **💬 Investor Chat:** Interrogate the AI agent. The agent is under a rigorous cryptographic NDA system prompt and will refuse to leak raw IP.
-*   **🛡️ Attestation Dashboard:** Verify the CVM's integrity with real-time Intel TDX remote attestation quotes.
-*   **💎 Premium UI:** Glassmorphism design, dark mode, and animated interactions.
+---
 
-## 🛠️ Stack
+## Architecture
 
-*   **Frontend:** Streamlit (Custom CSS)
-*   **AI Logic:** Google Gemini 2.5 Flash + Gemini Embedding 001
-*   **RAG:** LangChain + ChromaDB (Persistent)
-*   **Infrastructure:** Phala Network (dstack) + Docker
+```
+┌──────────────────────────────────────────────────────────┐
+│                    Phala dstack TEE                       │
+│                                                          │
+│  ┌─────────────┐    REST/SSE      ┌──────────────────┐  │
+│  │  Next.js    │ ──────────────▶  │  FastAPI Backend │  │
+│  │  Frontend   │                  │  (RAG + TEE Sim) │  │
+│  │  :3000      │ ◀──────────────  │  :8000           │  │
+│  └─────────────┘                  └──────────────────┘  │
+│                                           │              │
+│                                    ┌──────┴──────┐       │
+│                                    │  ChromaDB   │       │
+│                                    │  (vectors)  │       │
+│                                    └─────────────┘       │
+└──────────────────────────────────────────────────────────┘
+```
 
-## ⚡ Quick Start
+## Tech Stack
 
-1.  **Set API Key:**
-    ```bash
-    cp .env.example .env
-    # Edit .env and add your GOOGLE_API_KEY
-    ```
+| Layer | Technology |
+|---|---|
+| **Frontend** | Next.js 15, TailwindCSS v4, Framer Motion |
+| **Backend** | FastAPI, Uvicorn, LangChain |
+| **AI Model** | Google Gemini 2.5 Flash |
+| **Embeddings** | Gemini Embedding 001 |
+| **Vector Store** | ChromaDB |
+| **TEE** | Phala Network dstack (Intel TDX) |
 
-2.  **Run Locally:**
-    ```bash
-    pip install -r requirements.txt
-    streamlit run app.py
-    ```
+## Project Structure
 
-3.  **Deploy to Phala/dstack:**
-    ```bash
-    docker-compose up --build -d
-    ```
+```
+IC3-Hackathon/
+├── backend/
+│   ├── main.py              # FastAPI server
+│   ├── rag_engine.py        # LangChain RAG pipeline
+│   ├── tee_simulator.py     # Intel TDX attestation simulator
+│   ├── requirements.txt     # Python dependencies
+│   └── Dockerfile
+├── frontend/
+│   ├── src/
+│   │   ├── app/             # Next.js pages (vault, chat, attestation)
+│   │   ├── components/      # React components (Sidebar, etc.)
+│   │   └── lib/             # API client helpers
+│   ├── package.json
+│   └── Dockerfile
+├── docker-compose.yml       # Multi-service deployment
+└── .env                     # GOOGLE_API_KEY
+```
 
-## 🐛 Troubleshooting
+## Quick Start
 
-*   **SQLite Error:** The app uses `pysqlite3-binary` to fix older system SQLite versions automatically.
-*   **404 Model Error:** Ensure you are using `gemini-embedding-001` (set in `rag_engine.py`).
+### Prerequisites
+- **Node.js** ≥ 20 (`nvm use 20`)
+- **Python** ≥ 3.10
+- **Google API Key** (`GOOGLE_API_KEY`)
+
+### 1. Backend
+```bash
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # Add your GOOGLE_API_KEY
+uvicorn main:app --reload --port 8000
+```
+
+### 2. Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open **http://localhost:3000**
+
+### Docker (Production)
+```bash
+# Set GOOGLE_API_KEY in .env at project root
+docker compose up --build
+# Frontend → http://localhost:80
+# Backend  → http://localhost:8000
+```
+
+## Pages
+
+| Page | Route | Description |
+|---|---|---|
+| **Founder Vault** | `/vault` | Encrypted file upload + RAG ingestion |
+| **Investor Chat** | `/chat` | NDA-governed Q&A with AI agent |
+| **Attestation** | `/attestation` | TDX quote + TEE health dashboard |
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/health` | GET | Service status + document availability |
+| `/api/ingest` | POST | Upload files for RAG ingestion |
+| `/api/chat` | POST | Query the AI agent |
+| `/api/chat/stream` | POST | Streaming chat (SSE) |
+| `/api/attestation` | GET | TDX attestation quote + TEE health |
+
+## Environment Variables
+
+| Variable | Location | Description |
+|---|---|---|
+| `GOOGLE_API_KEY` | `backend/.env` | Google Gemini API key (required) |
+| `NEXT_PUBLIC_API_URL` | `frontend/.env.local` | Backend URL (default: `http://localhost:8000`) |
+
+## License
+
+Private — IC3 Hackathon 2026
