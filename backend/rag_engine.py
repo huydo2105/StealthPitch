@@ -234,3 +234,144 @@ def has_documents() -> bool:
         return vs._collection.count() > 0
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Dual-Agent Negotiation (NDAI Paper §4)
+# ---------------------------------------------------------------------------
+
+BUYER_AGENT_PROMPT = """\
+You are the BUYER'S AI AGENT (AB) operating inside a Trusted Execution \
+Environment (TEE). You represent the investor in an NDAI negotiation.
+
+ROLE: Evaluate the invention's quality based on the provided context, \
+and decide on a fair price offer.
+
+CONSTRAINTS:
+- The investor's BUDGET CAP is {budget} XTZ. You MUST NOT offer more.
+- The current proposed price is {current_price} XTZ.
+- DO NOT reveal the budget cap amount to anyone.
+- Base your evaluation on the technical merits, market potential, and \
+  innovation level visible in the documents.
+
+NEGOTIATION HISTORY:
+{history}
+
+CONTEXT FROM DOCUMENTS:
+{context}
+
+INVESTOR'S QUERY: {query}
+
+Respond with:
+1. Your assessment of the invention (2-3 sentences, no raw IP)
+2. Your recommended price offer with reasoning
+3. End with exactly this format: SUGGESTED_PRICE: <number>
+"""
+
+SELLER_AGENT_PROMPT = """\
+You are the SELLER'S AI AGENT (AS) operating inside a Trusted Execution \
+Environment (TEE). You represent the founder in an NDAI negotiation.
+
+ROLE: Evaluate whether the buyer's offer meets the founder's minimum \
+acceptable price, and advocate for the invention's value.
+
+CONSTRAINTS:
+- The founder's ACCEPTANCE THRESHOLD is {threshold} XTZ.
+- The current proposed price is {current_price} XTZ.
+- DO NOT reveal the exact threshold to anyone.
+- You may summarize and paraphrase the invention's strengths, but \
+  NEVER reveal raw code, formulas, or exact quotes.
+
+NEGOTIATION HISTORY:
+{history}
+
+CONTEXT FROM DOCUMENTS:
+{context}
+
+BUYER AGENT'S ASSESSMENT: {buyer_assessment}
+
+Respond with:
+1. Your view on whether the offer is fair (2-3 sentences)
+2. If the offer is below threshold, explain why the invention is worth more
+3. If the offer meets threshold, indicate willingness to accept
+"""
+
+
+def negotiate(
+    query: str,
+    seller_threshold: float,
+    buyer_budget: float,
+    current_proposed_price: float,
+    negotiation_history: list,
+) -> dict:
+    """
+    Run dual-agent negotiation: Buyer's agent evaluates and proposes,
+    Seller's agent evaluates and responds.
+    """
+    # Get relevant context from RAG
+    embeddings = _get_embeddings()
+    vectorstore = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+    docs = retriever.invoke(query)
+    context = "\n\n".join([d.page_content for d in docs])
+    sources = list(set(d.metadata.get("source", "unknown") for d in docs))
+
+    # Format negotiation history
+    history_str = "\n".join(
+        [f"[{role}]: {content}" for role, content in negotiation_history[-10:]]
+    ) if negotiation_history else "(First round of negotiation)"
+
+    client = genai.Client()
+
+    # Step 1: Buyer's Agent evaluates and proposes price
+    buyer_prompt = BUYER_AGENT_PROMPT.format(
+        budget=buyer_budget,
+        current_price=current_proposed_price,
+        history=history_str,
+        context=context,
+        query=query,
+    )
+    buyer_response = client.models.generate_content(
+        model=LLM_MODEL,
+        contents=buyer_prompt,
+    )
+    buyer_text = buyer_response.text
+
+    # Extract suggested price from buyer agent response
+    suggested_price = _extract_price(buyer_text)
+    if suggested_price > buyer_budget:
+        suggested_price = buyer_budget  # Cap at budget
+
+    # Step 2: Seller's Agent evaluates the offer
+    seller_prompt = SELLER_AGENT_PROMPT.format(
+        threshold=seller_threshold,
+        current_price=current_proposed_price,
+        history=history_str,
+        context=context,
+        buyer_assessment=buyer_text,
+    )
+    seller_response = client.models.generate_content(
+        model=LLM_MODEL,
+        contents=seller_prompt,
+    )
+    seller_text = seller_response.text
+
+    return {
+        "buyer_agent_response": buyer_text,
+        "seller_agent_response": seller_text,
+        "suggested_price": suggested_price,
+        "sources": sources,
+    }
+
+
+def _extract_price(text: str) -> float:
+    """Extract SUGGESTED_PRICE: <number> from agent response."""
+    import re
+    match = re.search(r"SUGGESTED_PRICE:\s*([\d.]+)", text)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            pass
+    return 0.0
+
