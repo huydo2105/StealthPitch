@@ -3,6 +3,8 @@
  * Typed fetch helpers for the FastAPI backend.
  */
 
+import { getSupabaseBrowserClient } from "@/lib/supabase";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -24,6 +26,31 @@ export interface ChatResponse {
     answer: string;
     session_id: string;
     sources: string[];
+    policy: Record<string, unknown>;
+    attestation_quote: Record<string, unknown>;
+    signature: string;
+    signature_algorithm: string;
+    signature_payload: string;
+    signing_public_key_pem: string;
+}
+
+export interface ChatSession {
+    id: string;
+    wallet_address: string;
+    deal_room_id?: string | null;
+    title: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ChatMessageRow {
+    id: string;
+    session_id: string;
+    wallet_address: string;
+    role: "user" | "assistant" | "buyer_agent" | "seller_agent" | "system";
+    content: string;
+    metadata: Record<string, unknown>;
+    created_at: string;
 }
 
 export interface AttestationResponse {
@@ -42,6 +69,8 @@ export interface AttestationResponse {
         timestamp: string;
         pck_certificate_chain: string[];
         signature: string;
+        security_profile?: string;
+        multi_provider_quotes?: Array<{ provider: string; quote: string }>;
     };
     health: {
         enclave_status: string;
@@ -53,6 +82,10 @@ export interface AttestationResponse {
         dstack_connected: boolean;
         last_heartbeat: string;
         uptime_seconds: number;
+        security_profile?: string;
+        threshold_mode?: boolean;
+        signing_algorithm?: string;
+        signing_public_key_pem?: string;
         confidential_vm: {
             provider: string;
             cpu_flags: string[];
@@ -100,6 +133,13 @@ export interface NegotiateResponse {
     threshold_met: boolean;
     within_budget: boolean;
     sources: string[];
+    policy?: Record<string, unknown>;
+    robustness?: Record<string, unknown>;
+    attestation_quote?: Record<string, unknown>;
+    signature?: string;
+    signature_algorithm?: string;
+    signature_payload?: string;
+    signing_public_key_pem?: string;
     room: DealRoom;
 }
 
@@ -107,6 +147,16 @@ export interface DealOutcome {
     status: "accepted" | "exited";
     message: string;
     room: DealRoom;
+}
+
+export interface RevealResponse {
+    answer: string;
+    sources: string[];
+    attestation_quote: Record<string, unknown>;
+    signature: string;
+    signature_algorithm: string;
+    signature_payload: string;
+    signing_public_key_pem: string;
 }
 
 // ── Core API Functions ──────────────────────────────────────────────
@@ -135,12 +185,21 @@ export async function ingestFiles(files: File[]): Promise<IngestResponse> {
 
 export async function sendChat(
     query: string,
-    sessionId?: string
+    sessionId?: string,
+    walletAddress?: string,
+    dealRoomId?: string,
+    participantRole?: string
 ): Promise<ChatResponse> {
     const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, session_id: sessionId }),
+        body: JSON.stringify({
+            query,
+            session_id: sessionId,
+            wallet_address: walletAddress,
+            deal_room_id: dealRoomId,
+            participant_role: participantRole,
+        }),
     });
 
     if (!res.ok) {
@@ -153,8 +212,20 @@ export async function sendChat(
 export function streamChat(
     query: string,
     sessionId: string | undefined,
+    walletAddress: string | undefined,
+    dealRoomId: string | undefined,
+    participantRole: string | undefined,
     onChunk: (chunk: string) => void,
-    onDone: (sessionId: string, sources: string[]) => void,
+    onDone: (payload: {
+        sessionId: string;
+        sources: string[];
+        policy?: Record<string, unknown>;
+        attestationQuote?: Record<string, unknown>;
+        signature?: string;
+        signatureAlgorithm?: string;
+        signaturePayload?: string;
+        signingPublicKeyPem?: string;
+    }) => void,
     onError: (error: string) => void
 ): AbortController {
     const controller = new AbortController();
@@ -162,7 +233,13 @@ export function streamChat(
     fetch(`${API_BASE}/api/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, session_id: sessionId }),
+        body: JSON.stringify({
+            query,
+            session_id: sessionId,
+            wallet_address: walletAddress,
+            deal_room_id: dealRoomId,
+            participant_role: participantRole,
+        }),
         signal: controller.signal,
     })
         .then(async (response) => {
@@ -196,7 +273,16 @@ export function streamChat(
                         try {
                             const data = JSON.parse(line.slice(6));
                             if (data.done) {
-                                onDone(data.session_id, data.sources || []);
+                                onDone({
+                                    sessionId: data.session_id,
+                                    sources: data.sources || [],
+                                    policy: data.policy,
+                                    attestationQuote: data.attestation_quote,
+                                    signature: data.signature,
+                                    signatureAlgorithm: data.signature_algorithm,
+                                    signaturePayload: data.signature_payload,
+                                    signingPublicKeyPem: data.signing_public_key_pem,
+                                });
                             } else if (data.chunk) {
                                 onChunk(data.chunk);
                             }
@@ -214,6 +300,61 @@ export function streamChat(
         });
 
     return controller;
+}
+
+export async function listWalletChatSessions(walletAddress: string): Promise<ChatSession[]> {
+    const res = await fetch(`${API_BASE}/api/chat/sessions/${walletAddress}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "List sessions failed" }));
+        throw new Error(err.detail || "List sessions failed");
+    }
+    const data = await res.json();
+    return data.sessions || [];
+}
+
+export async function listWalletChatMessages(
+    walletAddress: string,
+    sessionId: string
+): Promise<ChatMessageRow[]> {
+    const res = await fetch(`${API_BASE}/api/chat/sessions/${walletAddress}/${sessionId}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "List messages failed" }));
+        throw new Error(err.detail || "List messages failed");
+    }
+    const data = await res.json();
+    return data.messages || [];
+}
+
+export function subscribeToSessionMessages(
+    sessionId: string,
+    onInsert: (message: ChatMessageRow) => void
+): () => void {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+        return () => {
+            // no-op when realtime is not configured
+        };
+    }
+
+    const channel = supabase
+        .channel(`chat_messages_${sessionId}`)
+        .on(
+            "postgres_changes",
+            {
+                event: "INSERT",
+                schema: "public",
+                table: "chat_messages",
+                filter: `session_id=eq.${sessionId}`,
+            },
+            (payload) => {
+                onInsert(payload.new as ChatMessageRow);
+            }
+        )
+        .subscribe();
+
+    return () => {
+        supabase.removeChannel(channel);
+    };
 }
 
 export async function getAttestation(): Promise<AttestationResponse> {
@@ -326,6 +467,19 @@ export async function ingestForDeal(
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "Upload failed" }));
         throw new Error(err.detail || "Upload failed");
+    }
+    return res.json();
+}
+
+export async function revealDeal(roomId: string, query: string): Promise<RevealResponse> {
+    const res = await fetch(`${API_BASE}/api/deal/${roomId}/reveal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Reveal failed" }));
+        throw new Error(err.detail || "Reveal failed");
     }
     return res.json();
 }

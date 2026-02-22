@@ -1,93 +1,94 @@
-# StealthPitch — Roadmap
+# StealthPitch Roadmap (Paper-Aligned)
 
-## Paper Context
+This roadmap tracks implementation against NDAI paper milestones and current system status.
 
-StealthPitch implements the NDAI (Non-Disclosure AI) Agreements model from
-[arXiv:2502.07924v1](https://arxiv.org/abs/2502.07924v1) — solving Arrow's
-Disclosure Paradox by using AI agents inside a Trusted Execution Environment
-(TEE) as an "ironclad NDA."
+## Milestone Status (M1-M6)
 
----
+### M1 Hard NDA Enforcement Layer
+- [x] `backend/app/core/policy_enforcer.py` with deterministic checks
+- [x] Policy applied to standard chat and dual-agent responses
+- [x] Sanitized blocked outputs with reason codes
+- [x] Policy metadata returned by backend APIs
 
-## MVP (Current — Hackathon Demo)
+### M2 Conditional Disclosure + Payment Handshake
+- [x] Deal lifecycle in backend + contract (`create/join/negotiate/accept/exit`)
+- [x] Disclosure gate endpoint: `POST /api/deal/{id}/reveal`
+- [x] Reveal endpoint locked until deal status is `accepted`
+- [x] Frontend shows post-accept reveal action
 
-### Core NDAI Protocol
-- [x] **Deal Room** — Founder creates room with acceptance threshold,
-  investor joins with budget cap
-- [x] **Dual-Agent Negotiation** — Buyer's Agent (AB) evaluates invention
-  quality and proposes price; Seller's Agent (AS) protects founder's interests
-- [x] **Atomic Outcomes** — Accept (funds released via smart contract) or
-  Exit (full refund, all data deleted — nothing leaked)
-- [x] **NDA Enforcement** — AI agents summarize/paraphrase but never reveal
-  raw code, formulas, or exact quotes
+### M3 Noisy-Agent Robustness Controls
+- [x] `SIMULATE_AGENT_ERROR` and `AGENT_ERROR_RANGE` config
+- [x] Price noise injection and budget-cap truncation
+- [x] Threshold rejection signals
+- [x] JSONL metrics written for robustness analysis
 
-### Smart Contract (Etherlink Testnet)
-- [x] **NDAIEscrow.sol** — Escrow contract with TEE-authorized settlement
-- [x] **On-chain deal lifecycle** — Create → Deposit → Accept/Exit
-- [x] **Web3 bridge** — Backend signs transactions via TEE wallet
+### M4 Attestation-to-Response Binding
+- [x] Response payload signing in `backend/app/services/tee_service.py`
+- [x] Chat/stream/negotiate/reveal responses include signature metadata
+- [x] Frontend verification helper (`frontend/src/lib/signature.ts`)
+- [x] Verified signature badge in chat UI
 
-### TEE Foundation
-- [x] **Phala dstack** — Intel TDX attestation with hybrid simulation mode
-- [x] **RAG Pipeline** — ChromaDB + Google Gemini 2.5 Flash
-- [x] **Confidential document ingestion** — PDF/TXT upload + encryption
+### M5 Security Scope for High-Value Secrets
+- [x] `SECURITY_PROFILE` toggle (`baseline`, `high-value`)
+- [x] Simulated multi-provider quote data in high-value mode
+- [x] Profile surfaced in attestation dashboard
 
-### Frontend
-- [x] **Landing page** — "Wager-style" design with deep black theme & glow effects
-- [x] **Global Header** — Consistent navigation + "Connect Wallet" simulation
-- [x] **Deal Room** — Create/join deals with role-based views
-- [x] **Negotiation Chat** — Dual-agent responses with accept/exit buttons
-- [x] **Vault** — Document upload with encryption status
-- [x] **Attestation Dashboard** — TEE health + Intel TDX quote
+### M6 Claim-Level Evaluation Harness
+- [x] `backend/app/evaluation/evaluate_claims.py` added
+- [x] Checks for M1-M5 behavior
+- [x] Report output to `backend/evaluation_report.md`
 
----
+## Current Gaps to Production-Grade Paper Demo
 
-## v2 (Post-Hackathon)
+- [ ] Replace heuristic policy gate with stronger semantic leakage detection.
+- [ ] Bind signatures to externally verifiable attestation roots (not only local key simulation).
+- [ ] Add reproducible benchmark dataset for false-positive/false-negative policy metrics.
+- [ ] Add CI pipeline to run `app/evaluation/evaluate_claims.py` and publish report artifacts.
+- [ ] Add stronger deal-scoped document isolation for concurrent rooms.
 
-### Protocol Enhancements
-- [ ] Multi-round bargaining with counter-offers
-- [ ] Multiple invention disclosure (portfolio deals)
-- [ ] Time-locked deals with automatic expiry
-- [ ] Threshold signatures for multi-party TEE consensus
+## Next Iteration Plan
 
-### Blockchain
-- [ ] Mainnet deployment on Etherlink
-- [ ] ERC-20 token support (not just native XTZ)
-- [ ] Full MetaMask wallet connect integration
-- [ ] Deal history and analytics dashboard
+### P1 Verification Hardening
+- Verify signatures against remote attestable key material.
+- Add challenge-response freshness checks and replay protection.
 
-### TEE Hardening
-- [ ] Multi-TEE replication for fault tolerance
-- [ ] Formal verification of NDA system prompt
-- [ ] Audit trail with cryptographic proofs
-- [ ] Side-channel resistance testing
+### P2 Policy Quality
+- Add similarity-based leakage checks against retrieved source chunks.
+- Expand adversarial corpus and publish precision/recall metrics.
 
----
+### P3 Multi-TEE Realism
+- Move from simulated multi-provider quotes to an adapter layer for real providers.
+- Add threshold-verification logic and policy around quorum failure.
 
-## Deployment Guide
+### P4 Evaluation and CI
+- Add automated job to run evaluation harness per PR.
+- Store and compare historical claim-level pass/fail trends.
 
-### Prerequisites
-- Phala dstack account
-- Docker with TEE support (Intel TDX)
-- Etherlink testnet XTZ (from [faucet](https://faucet.etherlink.com))
+## Progress Report Template
 
-### Build & Deploy
-```bash
-# 1. Build TEE image
-docker compose build
-
-# 2. Deploy smart contract
-cd contracts && npm install && npx hardhat run scripts/deploy.js --network etherlinkTestnet
-
-# 3. Configure backend
-echo "ESCROW_CONTRACT_ADDRESS=<deployed_address>" >> backend/.env
-echo "TEE_PRIVATE_KEY=<deployer_key>" >> backend/.env
-
-# 4. Deploy via Phala Dashboard
-#    Upload docker-compose.yml to dstack
+```markdown
+## Progress Report
+- Timestamp: 2026-02-19T00:00:00Z
+- Chosen solution + rationale:
+  - (Describe selected implementation option and why.)
+- Summary of applied changes:
+  - (List updated files and behavior changes.)
+- Status:
+  - success | warnings | error
+- Next steps / TODOs:
+  - [ ] ...
 ```
 
-### Hybrid Mode (Local Dev)
-When running outside a real TEE, the system automatically:
-- Simulates TDX attestation quotes
-- Uses simulated blockchain transactions (if contract not deployed)
-- Provides full functionality for demo purposes
+## Deployment Quick Reference
+
+```bash
+# Backend
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+
+# Frontend
+cd frontend
+npm install
+npm run dev
+```

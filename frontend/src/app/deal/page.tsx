@@ -428,6 +428,28 @@ function DealRoomContent() {
                     ))}
                 </motion.div>
             )}
+
+            {room?.status === "accepted" && (
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="p-4 rounded-xl bg-stealth-green/5 border border-stealth-green/20"
+                >
+                    <p className="text-sm font-semibold text-stealth-green">
+                        Disclosure Unlocked
+                    </p>
+                    <p className="text-xs text-stealth-muted mt-1">
+                        Deal accepted: raw disclosure access is now enabled in the negotiation
+                        chat via the post-accept reveal action.
+                    </p>
+                    <button
+                        onClick={() => router.push(`/chat?deal=${room.room_id}`)}
+                        className="mt-3 w-full py-2 rounded-lg bg-stealth-green/10 border border-stealth-green/30 text-stealth-green text-sm font-semibold hover:bg-stealth-green/20 transition-colors"
+                    >
+                        Open Chat and Reveal IP
+                    </button>
+                </motion.div>
+            )}
         </div>
     );
 }

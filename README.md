@@ -1,163 +1,141 @@
-# StealthPitch 🛡️
+# StealthPitch
 
-**Secure invention disclosure using AI agents inside a Trusted Execution
-Environment — an "ironclad NDA" powered by cryptography and smart contracts.**
+Secure invention disclosure using AI agents inside a Trusted Execution Environment (TEE), aligned to NDAI (arXiv:2502.07924v1).
 
-> Based on [NDAI Agreements (arXiv:2502.07924v1)](https://arxiv.org/abs/2502.07924v1)
-> — solving Arrow's Disclosure Paradox with TEEs.
+## What Is Implemented Now
 
----
+- Hard NDA policy enforcement with deterministic server-side blocking/sanitization.
+- Conditional disclosure flow: reveal endpoint is locked until deal is accepted.
+- Dual-agent negotiation with budget cap and threshold checks.
+- Noisy-agent simulation with bounded outcomes and metric logs.
+- Response-level attestation binding: signed payloads + verification metadata.
+- Security profiles (`baseline` / `high-value`) with simulated multi-provider TEE mode.
+- Evaluation harness for M1-M5 with markdown report output.
+- Shared deal-room chat sessions with Supabase Realtime sync for founder/investor.
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                  Phala dstack TEE (CVM)                       │
-│                                                              │
-│  ┌────────────┐  REST/SSE  ┌───────────────────────────┐    │
-│  │  Next.js   │ ─────────▶ │  FastAPI Backend           │    │
-│  │  Frontend  │            │  ├─ RAG Engine (Gemini)    │    │
-│  │  :3000     │ ◀───────── │  ├─ Deal Room Manager     │    │
-│  │            │            │  ├─ Blockchain Bridge      │    │
-│  └────────────┘            │  └─ TEE Attestation        │    │
-│                            └──────────┬─────────────────┘    │
-│                                       │                      │
-│                                ┌──────┴──────┐               │
-│                                │  ChromaDB   │               │
-│                                └─────────────┘               │
-└───────────────────────────────────┬──────────────────────────┘
-                                    │ web3 RPC
-                              ┌─────┴────────────┐
-                              │  Etherlink        │
-                              │  Testnet (128123) │
-                              │  NDAIEscrow.sol   │
-                              └──────────────────┘
+```text
+Frontend (Next.js) <-> Backend (FastAPI)
+                          |- RAG + Policy Gate
+                          |- Deal Room + Escrow lifecycle
+                          |- Attestation + response signing
+                          |- Robustness metrics
+                          |- Evaluation harness
+                          |- ChromaDB
+                          \- Etherlink NDAIEscrow (optional, via web3 bridge)
 ```
 
-## NDAI Deal Protocol
+## NDAI Protocol Flow
 
-| Step | Action | Where |
-|------|--------|-------|
-| 1 | Founder creates deal room with **acceptance threshold** | Backend + Etherlink |
-| 2 | Founder uploads proprietary documents | TEE enclave |
-| 3 | Investor joins with **budget cap** + deposits to escrow | Etherlink smart contract |
-| 4 | AI agents negotiate inside TEE (dual-agent RAG) | TEE enclave |
-| 5a | **ACCEPT** → funds released to founder, docs accessible | Smart contract |
-| 5b | **EXIT** → full refund, all data deleted — nothing leaked | Smart contract + TEE |
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| **Frontend** | Next.js 15, TailwindCSS, Framer Motion |
-| **Backend** | FastAPI, LangChain, Google Gemini 2.5 Flash |
-| **Vector DB** | ChromaDB |
-| **TEE** | Phala Network dstack (Intel TDX) |
-| **Blockchain** | Etherlink Testnet, Solidity, Hardhat, web3.py |
-| **Smart Contract** | NDAIEscrow.sol (escrow with TEE-authorized settlement) |
+1. Founder creates deal with acceptance threshold.
+2. Investor joins with budget cap and escrow deposit.
+3. AI agents negotiate under NDA policy gate.
+4. Outcome is atomic:
+   - **ACCEPT**: settlement occurs and reveal path unlocks.
+   - **EXIT**: investor refunded and deal exits.
+5. Signed response metadata is returned for verification.
 
 ## Project Structure
 
-```
-IC3-Hackathon/
-├── backend/
-│   ├── main.py              # FastAPI app + deal room endpoints
-│   ├── rag_engine.py         # RAG pipeline + dual-agent negotiation
-│   ├── deal_room.py          # Deal lifecycle manager
-│   ├── blockchain.py         # Web3.py bridge to Etherlink
-│   ├── tee_manager.py        # Intel TDX attestation
-│   └── requirements.txt
-├── contracts/
-│   ├── NDAIEscrow.sol        # Escrow smart contract
-│   ├── hardhat.config.js     # Etherlink Testnet config
-│   ├── scripts/deploy.js     # Deployment script
-│   └── package.json
-├── frontend/
-│   └── src/
-│       ├── app/
-│       │   ├── page.tsx       # Landing page (NDAI explainer)
-│       │   ├── deal/page.tsx  # Deal room (create/join)
-│       │   ├── chat/page.tsx  # Negotiation chat (dual-agent)
-│       │   ├── vault/page.tsx # Document upload
-│       │   └── attestation/page.tsx  # TEE dashboard
-│       ├── components/
-│       │   └── Sidebar.tsx
-│       └── lib/
-│           └── api.ts         # Typed API client
-├── docker-compose.yml
-├── README.md
-└── ROADMAP.md
+```text
+backend/
+  app/
+    main.py
+    core/policy_enforcer.py
+    services/rag_service.py
+    services/deal_service.py
+    services/blockchain_service.py
+    services/tee_service.py
+    repositories/chat_repository.py
+    evaluation/evaluate_claims.py
+    db/supabase_schema.sql
+contracts/
+  NDAIEscrow.sol
+frontend/src/
+  app/chat/page.tsx
+  app/deal/page.tsx
+  app/attestation/page.tsx
+  lib/api.ts
+  lib/signature.ts
 ```
 
 ## Quick Start
 
-### Prerequisites
-- Python 3.11+ with venv
-- Node.js 18+
-- Google API key for Gemini
-
 ### Backend
+
 ```bash
 cd backend
-python -m venv venv && source venv/bin/activate
+python -m venv venv
+# Windows PowerShell
+source venv/bin/activate
 pip install -r requirements.txt
-echo "GOOGLE_API_KEY=your_key" > .env
-uvicorn main:app --reload --port 8000
+copy .env.example .env
+uvicorn app.main:app --reload --port 8000
 ```
 
 ### Frontend
+
 ```bash
 cd frontend
 npm install
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+echo NEXT_PUBLIC_API_URL=http://localhost:8000 > .env.local
 npm run dev
 ```
 
-### Smart Contract (Optional — for blockchain integration)
+### Contracts (optional)
+
 ```bash
 cd contracts
 npm install
-cp .env.example .env  # Fill in DEPLOYER_PRIVATE_KEY
+copy .env.example .env
 npx hardhat compile
 npx hardhat run scripts/deploy.js --network etherlinkTestnet
-# Add the contract address to backend/.env as ESCROW_CONTRACT_ADDRESS
 ```
 
-## API Endpoints
+## Key API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/health` | Service health + active deals |
-| `POST` | `/api/ingest` | Upload documents to RAG |
-| `POST` | `/api/chat` | Standard Q&A chat |
-| `POST` | `/api/chat/stream` | Streaming Q&A (SSE) |
-| `GET` | `/api/attestation` | TEE attestation quote |
-| `POST` | `/api/deal/create` | Create deal room |
-| `POST` | `/api/deal/{id}/join` | Join deal with budget |
-| `POST` | `/api/deal/{id}/negotiate` | Dual-agent negotiation |
-| `POST` | `/api/deal/{id}/accept` | Accept deal (on-chain) |
-| `POST` | `/api/deal/{id}/exit` | Exit deal (on-chain refund) |
-| `GET` | `/api/deal/{id}` | Get deal room state |
-| `GET` | `/api/deals` | List all deals |
-| `POST` | `/api/deal/{id}/ingest` | Upload docs for deal |
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/health` | health + active deals |
+| POST | `/api/chat` | policy-gated chat with signed response |
+| POST | `/api/chat/stream` | streaming chat with final signed metadata |
+| POST | `/api/chat` / `/api/chat/stream` + `deal_room_id` | shared room session title + realtime-friendly persistence |
+| GET | `/api/attestation` | quote + health + security profile |
+| POST | `/api/deal/{id}/negotiate` | dual-agent negotiation |
+| POST | `/api/deal/{id}/accept` | accept deal |
+| POST | `/api/deal/{id}/exit` | exit deal |
+| POST | `/api/deal/{id}/reveal` | unrestricted reveal (accepted deals only) |
+
+## Evaluation Harness
+
+Run the claim checks (M1-M5):
+
+```bash
+cd backend
+python app/evaluation/evaluate_claims.py
+```
+
+Generated report: `backend/evaluation_report.md`
 
 ## Environment Variables
 
 ### Backend (`backend/.env`)
+
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `GOOGLE_API_KEY` | ✅ | Google Gemini API key |
-| `ESCROW_CONTRACT_ADDRESS` | Optional | Deployed NDAIEscrow address |
-| `TEE_PRIVATE_KEY` | Optional | TEE wallet private key |
-| `ETHERLINK_RPC_URL` | Optional | Defaults to Etherlink Testnet |
+|---|---|---|
+| `GOOGLE_API_KEY` | yes | Gemini API key |
+| `ESCROW_CONTRACT_ADDRESS` | no | deployed escrow contract |
+| `TEE_PRIVATE_KEY` | no | backend signer wallet |
+| `ETHERLINK_RPC_URL` | no | RPC endpoint |
+| `SIMULATE_AGENT_ERROR` | no | enable noisy-agent simulation (`true/false`) |
+| `AGENT_ERROR_RANGE` | no | noise amplitude (float) |
+| `SECURITY_PROFILE` | no | `baseline` or `high-value` |
 
 ### Frontend (`frontend/.env.local`)
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `NEXT_PUBLIC_API_URL` | ✅ | Backend URL (default: http://localhost:8000) |
 
-### Contracts (`contracts/.env`)
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `DEPLOYER_PRIVATE_KEY` | ✅ | Wallet private key for deployment |
-| `ETHERLINK_RPC_URL` | Optional | Defaults to Etherlink Testnet |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | yes | backend URL |
+| `NEXT_PUBLIC_SUPABASE_URL` | yes (for realtime) | Supabase project URL for browser subscriptions |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes (for realtime) | Supabase anon key used by frontend realtime client |

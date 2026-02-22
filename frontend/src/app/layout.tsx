@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
+import { WalletProvider } from "@/lib/wallet-context";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -30,18 +31,20 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased bg-stealth-bg text-stealth-text`}
       >
-        <div className="flex h-screen overflow-hidden">
-          {/* Sidebar */}
-          <Sidebar />
+        <WalletProvider>
+          <div className="flex h-screen overflow-hidden">
+            {/* Sidebar */}
+            <Sidebar />
 
-          {/* Main Content */}
-          <main className="flex-1 flex flex-col overflow-hidden relative">
-            <Header />
+            {/* Main Content */}
+            <main className="flex-1 flex flex-col overflow-hidden relative">
+              <Header />
 
-            {/* Page Content */}
-            <div className="flex-1 overflow-y-auto">{children}</div>
-          </main>
-        </div>
+              {/* Page Content */}
+              <div className="flex-1 overflow-y-auto">{children}</div>
+            </main>
+          </div>
+        </WalletProvider>
       </body>
     </html>
   );

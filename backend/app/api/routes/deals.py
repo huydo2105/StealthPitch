@@ -1,0 +1,224 @@
+"""Deal room and post-acceptance reveal routes."""
+
+from __future__ import annotations
+
+import os
+import tempfile
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
+from app.deps import build_signed_envelope
+from app.schemas import CreateDealRequest, JoinDealRequest, NegotiateRequest, RevealRequest
+from app.services import deal_service, rag_service, tee_service
+
+router = APIRouter(tags=["deals"])
+
+
+@router.post("/api/deal/create")
+async def create_deal(request: CreateDealRequest) -> Dict[str, Any]:
+    """Founder creates a deal room with a seller threshold."""
+    try:
+        room = deal_service.create_room(
+            seller_address=request.seller_address,
+            threshold=request.threshold,
+        )
+        return deal_service.room_to_dict(room)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to create deal: {str(exc)}")
+
+
+@router.post("/api/deal/{room_id}/join")
+async def join_deal(room_id: str, request: JoinDealRequest) -> Dict[str, Any]:
+    """Investor joins a deal room with budget cap."""
+    try:
+        room = deal_service.join_room(
+            room_id=room_id,
+            buyer_address=request.buyer_address,
+            budget=request.budget,
+        )
+        return deal_service.room_to_dict(room)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to join deal: {str(exc)}")
+
+
+@router.get("/api/deal/{room_id}")
+async def get_deal(room_id: str) -> Dict[str, Any]:
+    """Return current state for a deal room."""
+    room = deal_service.get_room(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail=f"Deal room {room_id} not found")
+    return deal_service.room_to_dict(room)
+
+
+@router.get("/api/deals")
+async def list_deals() -> List[Dict[str, Any]]:
+    """List all deal rooms."""
+    return [deal_service.room_to_dict(room) for room in deal_service.get_all_rooms()]
+
+
+@router.post("/api/deal/{room_id}/negotiate")
+async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, Any]:
+    """Run dual-agent negotiation and return signed result."""
+    room = deal_service.get_room(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail=f"Deal room {room_id} not found")
+    if room.status.value not in ("funded", "negotiating"):
+        raise HTTPException(status_code=400, detail=f"Deal room is in {room.status.value} state — cannot negotiate")
+    if not rag_service.has_documents():
+        raise HTTPException(status_code=400, detail="No documents ingested yet")
+
+    deal_service.add_negotiation_message(room_id, request.role, request.query)
+
+    try:
+        result = rag_service.negotiate(
+            query=request.query,
+            seller_threshold=room.seller_threshold,
+            buyer_budget=room.buyer_budget,
+            current_proposed_price=room.proposed_price,
+            negotiation_history=[(msg.role, msg.content) for msg in room.negotiation_history],
+        )
+        deal_service.add_negotiation_message(room_id, "buyer_agent", result["buyer_agent_response"])
+        deal_service.add_negotiation_message(room_id, "seller_agent", result["seller_agent_response"])
+
+        if result.get("suggested_price", 0) > 0:
+            deal_service.update_proposed_price(room_id, result["suggested_price"])
+
+        quote = tee_service.get_tdx_quote()
+        payload = {
+            "room_id": room_id,
+            "buyer_agent": result["buyer_agent_response"],
+            "seller_agent": result["seller_agent_response"],
+            "suggested_price": result.get("suggested_price", 0),
+            "policy": result.get("policy", {}),
+            "robustness": result.get("robustness", {}),
+            "quote_hash": quote.get("report_data", ""),
+            "issued_at": datetime.now(timezone.utc).isoformat(),
+        }
+        signed = build_signed_envelope(payload)
+        return {
+            "buyer_agent": result["buyer_agent_response"],
+            "seller_agent": result["seller_agent_response"],
+            "suggested_price": result.get("suggested_price", 0),
+            "threshold_met": result.get("suggested_price", 0) >= room.seller_threshold,
+            "within_budget": result.get("suggested_price", 0) <= room.buyer_budget,
+            "sources": result.get("sources", []),
+            "policy": result.get("policy", {}),
+            "robustness": result.get("robustness", {}),
+            "attestation_quote": quote,
+            "signature": signed["signature"],
+            "signature_algorithm": signed["signature_algorithm"],
+            "signature_payload": signed["signature_payload"],
+            "signing_public_key_pem": signed["signing_public_key_pem"],
+            "room": deal_service.room_to_dict(deal_service.get_room(room_id)),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Negotiation error: {str(exc)}")
+
+
+@router.post("/api/deal/{room_id}/accept")
+async def accept_deal_endpoint(room_id: str) -> Dict[str, Any]:
+    """Accept the deal and release payment."""
+    try:
+        room = deal_service.accept_deal(room_id)
+        return {
+            "status": "accepted",
+            "message": f"Deal sealed! {room.proposed_price} XTZ released to founder.",
+            "room": deal_service.room_to_dict(room),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Accept failed: {str(exc)}")
+
+
+@router.post("/api/deal/{room_id}/exit")
+async def exit_deal_endpoint(room_id: str) -> Dict[str, Any]:
+    """Exit the deal and refund investor."""
+    try:
+        room = deal_service.exit_deal(room_id)
+        return {
+            "status": "exited",
+            "message": "Deal exited. Investor refunded. All session data deleted.",
+            "room": deal_service.room_to_dict(room),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Exit failed: {str(exc)}")
+
+
+@router.post("/api/deal/{room_id}/ingest")
+async def ingest_for_deal(room_id: str, files: List[UploadFile] = File(...)) -> Dict[str, Any]:
+    """Upload files and ingest them for a specific deal room."""
+    room = deal_service.get_room(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail=f"Deal room {room_id} not found")
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    temp_paths: List[str] = []
+    try:
+        for upload in files:
+            suffix = os.path.splitext(upload.filename or "doc.txt")[1]
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            content = await upload.read()
+            tmp.write(content)
+            tmp.close()
+            temp_paths.append(tmp.name)
+
+        chunk_count = rag_service.ingest_documents(temp_paths)
+        deal_service.mark_documents_ingested(room_id)
+        return {
+            "chunks_created": chunk_count,
+            "files_processed": len(files),
+            "message": f"Successfully ingested {len(files)} file(s) into {chunk_count} chunks.",
+            "room": deal_service.room_to_dict(deal_service.get_room(room_id)),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(exc)}")
+    finally:
+        for path in temp_paths:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+@router.post("/api/deal/{room_id}/reveal")
+async def reveal_after_accept(room_id: str, request: RevealRequest) -> Dict[str, Any]:
+    """Return unrestricted disclosure after accepted settlement."""
+    room = deal_service.get_room(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail=f"Deal room {room_id} not found")
+    if room.status.value != "accepted":
+        raise HTTPException(status_code=403, detail="Disclosure locked until deal is ACCEPTED")
+    if not rag_service.has_documents():
+        raise HTTPException(status_code=400, detail="No documents available for reveal")
+
+    try:
+        result = rag_service.run_unrestricted_query(request.query)
+        quote = tee_service.get_tdx_quote()
+        payload = {
+            "room_id": room_id,
+            "revealed_answer": result["answer"],
+            "sources": result["sources"],
+            "quote_hash": quote.get("report_data", ""),
+            "issued_at": datetime.now(timezone.utc).isoformat(),
+        }
+        signed = build_signed_envelope(payload)
+        return {
+            "answer": result["answer"],
+            "sources": result["sources"],
+            "attestation_quote": quote,
+            "signature": signed["signature"],
+            "signature_algorithm": signed["signature_algorithm"],
+            "signature_payload": signed["signature_payload"],
+            "signing_public_key_pem": signed["signing_public_key_pem"],
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Reveal failed: {str(exc)}")
+

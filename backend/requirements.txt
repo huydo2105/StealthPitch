@@ -13,3 +13,5 @@ google-genai
 pypdf
 pysqlite3-binary
 requests-unixsocket
+cryptography
+supabase

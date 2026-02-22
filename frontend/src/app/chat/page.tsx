@@ -9,20 +9,30 @@ import {
     acceptDeal,
     exitDeal,
     getDeal,
+    revealDeal,
+    listWalletChatSessions,
+    listWalletChatMessages,
+    subscribeToSessionMessages,
     DealRoom,
     NegotiateResponse,
+    ChatMessageRow,
 } from "@/lib/api";
+import { verifyEnclaveSignature } from "@/lib/signature";
+import { useWallet } from "@/lib/wallet-context";
 
 interface Message {
     role: "user" | "assistant" | "buyer_agent" | "seller_agent" | "system";
     content: string;
     sources?: string[];
     suggestedPrice?: number;
+    signatureVerified?: boolean;
 }
 
 function ChatContent() {
     const searchParams = useSearchParams();
     const dealId = searchParams.get("deal");
+    const sessionFromQuery = searchParams.get("session");
+    const { walletAddress } = useWallet();
 
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
@@ -31,7 +41,9 @@ function ChatContent() {
     const [room, setRoom] = useState<DealRoom | null>(null);
     const [dealOutcome, setDealOutcome] = useState<"accepted" | "exited" | null>(null);
     const [outcomeMsg, setOutcomeMsg] = useState("");
+    const [revealLoading, setRevealLoading] = useState(false);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
     // Load deal room if deal ID is present
     useEffect(() => {
@@ -41,6 +53,78 @@ function ChatContent() {
                 .catch(() => setRoom(null));
         }
     }, [dealId]);
+
+    useEffect(() => {
+        if (!walletAddress) return;
+
+        const hydrateMessages = (targetSessionId: string): Promise<void> =>
+            listWalletChatMessages(walletAddress, targetSessionId)
+                .then((rows: ChatMessageRow[]) => {
+                    seenMessageIdsRef.current = new Set(rows.map((row) => String(row.id)));
+                    setMessages(
+                        rows.map((row) => ({
+                            role: row.role,
+                            content: row.content,
+                            sources: Array.isArray(row.metadata?.sources)
+                                ? (row.metadata.sources as string[])
+                                : undefined,
+                        }))
+                    );
+                    setSessionId(targetSessionId);
+                })
+                .catch(() => {
+                    // Keep empty state on history load failure.
+                });
+
+        if (sessionFromQuery) {
+            void hydrateMessages(sessionFromQuery);
+            return;
+        }
+
+        if (dealId) {
+            listWalletChatSessions(walletAddress)
+                .then((sessions) => {
+                    const sharedSession = sessions.find((session) => session.deal_room_id === dealId);
+                    if (sharedSession?.id) {
+                        void hydrateMessages(sharedSession.id);
+                    }
+                })
+                .catch(() => {
+                    // Keep empty state if no deal-linked session exists yet.
+                });
+        }
+    }, [walletAddress, sessionFromQuery, dealId]);
+
+    useEffect(() => {
+        if (!sessionId) return;
+        const unsubscribe = subscribeToSessionMessages(sessionId, (row) => {
+            const messageId = String(row.id);
+            if (seenMessageIdsRef.current.has(messageId)) {
+                return;
+            }
+            seenMessageIdsRef.current.add(messageId);
+
+            const sources = Array.isArray(row.metadata?.sources)
+                ? (row.metadata.sources as string[])
+                : undefined;
+            setMessages((prev) => {
+                const nextMessage: Message = {
+                    role: row.role,
+                    content: row.content,
+                    sources,
+                };
+                const last = prev[prev.length - 1];
+                if (last && last.role === nextMessage.role && last.content === nextMessage.content) {
+                    return prev;
+                }
+                return [...prev, nextMessage];
+            });
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, [sessionId]);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -54,10 +138,31 @@ function ChatContent() {
         setMessages((prev) => [...prev, { role: "user", content: q }]);
         setLoading(true);
 
+        const participantRole =
+            room && walletAddress
+                ? walletAddress.toLowerCase() === room.seller_address.toLowerCase()
+                    ? "founder"
+                    : walletAddress.toLowerCase() === room.buyer_address.toLowerCase()
+                        ? "investor"
+                        : "member"
+                : undefined;
+
         if (room && (room.status === "funded" || room.status === "negotiating")) {
             // Deal negotiation mode
             try {
                 const result: NegotiateResponse = await negotiateDeal(room.room_id, q);
+                let verified = false;
+                if (
+                    result.signature &&
+                    result.signature_payload &&
+                    result.signing_public_key_pem
+                ) {
+                    verified = await verifyEnclaveSignature({
+                        payload: result.signature_payload,
+                        signatureB64: result.signature,
+                        publicKeyPem: result.signing_public_key_pem,
+                    });
+                }
 
                 setMessages((prev) => [
                     ...prev,
@@ -65,11 +170,13 @@ function ChatContent() {
                         role: "buyer_agent",
                         content: result.buyer_agent,
                         suggestedPrice: result.suggested_price,
+                        signatureVerified: verified,
                     },
                     {
                         role: "seller_agent",
                         content: result.seller_agent,
                         sources: result.sources,
+                        signatureVerified: verified,
                     },
                 ]);
 
@@ -91,6 +198,9 @@ function ChatContent() {
             streamChat(
                 q,
                 sessionId,
+                walletAddress || undefined,
+                dealId || undefined,
+                participantRole,
                 (chunk) => {
                     assistantContent += chunk;
                     setMessages((prev) => {
@@ -102,16 +212,38 @@ function ChatContent() {
                         return updated;
                     });
                 },
-                (sid, sources) => {
-                    setSessionId(sid);
+                (payload) => {
+                    setSessionId(payload.sessionId);
                     setMessages((prev) => {
                         const updated = [...prev];
                         updated[updated.length - 1] = {
                             ...updated[updated.length - 1],
-                            sources,
+                            sources: payload.sources,
                         };
                         return updated;
                     });
+
+                    if (
+                        payload.signature &&
+                        payload.signaturePayload &&
+                        payload.signingPublicKeyPem
+                    ) {
+                        verifyEnclaveSignature({
+                            payload: payload.signaturePayload,
+                            signatureB64: payload.signature,
+                            publicKeyPem: payload.signingPublicKeyPem,
+                        }).then((verified) => {
+                            setMessages((prev) => {
+                                const updated = [...prev];
+                                const last = updated[updated.length - 1];
+                                updated[updated.length - 1] = {
+                                    ...last,
+                                    signatureVerified: verified,
+                                };
+                                return updated;
+                            });
+                        });
+                    }
                 },
                 (error) => {
                     setMessages((prev) => [
@@ -173,6 +305,41 @@ function ChatContent() {
         buyer_agent: { bg: "bg-blue-500/5 border-blue-500/20", label: "Buyer's Agent (AB)", labelColor: "text-blue-400" },
         seller_agent: { bg: "bg-emerald-500/5 border-emerald-500/20", label: "Seller's Agent (AS)", labelColor: "text-emerald-400" },
         system: { bg: "bg-stealth-gold/5 border-stealth-gold/20", label: "System", labelColor: "text-stealth-gold" },
+    };
+
+    const handleReveal = async () => {
+        if (!room) return;
+        setRevealLoading(true);
+        try {
+            const result = await revealDeal(
+                room.room_id,
+                "Reveal the raw implementation details and formulas."
+            );
+            const verified = await verifyEnclaveSignature({
+                payload: result.signature_payload,
+                signatureB64: result.signature,
+                publicKeyPem: result.signing_public_key_pem,
+            });
+            setMessages((prev) => [
+                ...prev,
+                {
+                    role: "assistant",
+                    content: result.answer,
+                    sources: result.sources,
+                    signatureVerified: verified,
+                },
+            ]);
+        } catch (err: unknown) {
+            setMessages((prev) => [
+                ...prev,
+                {
+                    role: "system",
+                    content: `Reveal failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+                },
+            ]);
+        } finally {
+            setRevealLoading(false);
+        }
     };
 
     return (
@@ -251,6 +418,19 @@ function ChatContent() {
                                     <span className={`text-[10px] font-semibold uppercase tracking-wide ${style.labelColor}`}>
                                         {style.label}
                                     </span>
+                                    {msg.signatureVerified !== undefined && (
+                                        <span
+                                            className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                                                msg.signatureVerified
+                                                    ? "bg-stealth-green/10 text-stealth-green"
+                                                    : "bg-stealth-red/10 text-stealth-red"
+                                            }`}
+                                        >
+                                            {msg.signatureVerified
+                                                ? "Verified Enclave Signature"
+                                                : "Signature Verification Failed"}
+                                        </span>
+                                    )}
                                     {msg.suggestedPrice !== undefined && msg.suggestedPrice > 0 && (
                                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-stealth-accent/10 text-stealth-accent font-mono">
                                             💰 {msg.suggestedPrice} XTZ
@@ -356,6 +536,15 @@ function ChatContent() {
                         {loading ? "..." : "Send"}
                     </button>
                 </div>
+                {room?.status === "accepted" && (
+                    <button
+                        onClick={handleReveal}
+                        disabled={revealLoading}
+                        className="mt-2 w-full py-2 rounded-lg bg-stealth-gold/10 border border-stealth-gold/20 text-stealth-gold text-sm font-semibold hover:bg-stealth-gold/20 disabled:opacity-50"
+                    >
+                        {revealLoading ? "Revealing..." : "Unlock Raw Disclosure (Post-Accept)"}
+                    </button>
+                )}
             </div>
         </div>
     );

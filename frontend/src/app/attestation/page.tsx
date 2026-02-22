@@ -179,6 +179,20 @@ export default function AttestationPage() {
                 <StatusBadge label="TEE Type" value={quote.tee_type} color="gold" />
             </motion.div>
 
+            <motion.div
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-xl bg-stealth-surface border border-stealth-border p-4 mb-6"
+            >
+                <p className="text-xs text-stealth-muted uppercase tracking-wider mb-1">
+                    Security Profile
+                </p>
+                <p className="text-sm font-semibold text-stealth-text">
+                    {health.security_profile || quote.security_profile || "baseline"}
+                    {health.threshold_mode ? " (Multi-TEE Threshold Mode)" : ""}
+                </p>
+            </motion.div>
+
             {/* Measurements Grid */}
             <motion.div
                 variants={containerVariants}

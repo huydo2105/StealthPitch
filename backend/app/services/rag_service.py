@@ -8,41 +8,54 @@ vector store using the native `google.genai` SDK.
 # ── SQLite hot-patch (required in slim Docker images) ────────────────
 __import__("pysqlite3")
 import sys
+
 sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
 # ─────────────────────────────────────────────────────────────────────
 
+import json
+import logging
 import os
+import random
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from dotenv import load_dotenv
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_chroma import Chroma
+from google import genai
+from google.genai import types
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts import (
     ChatPromptTemplate,
-    SystemMessagePromptTemplate,
     HumanMessagePromptTemplate,
+    SystemMessagePromptTemplate,
 )
+from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
-from langchain_core.outputs import ChatResult, ChatGeneration
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from google import genai
-from google.genai import types
+from app.core.policy_enforcer import PolicyGate, PolicyResult
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-CHROMA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
+_BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+CHROMA_DIR = os.path.join(_BACKEND_ROOT, "chroma_db")
 EMBEDDING_MODEL = "gemini-embedding-001"
-LLM_MODEL = "gemini-2.5-flash" 
+LLM_MODEL = "gemini-2.5-flash"
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
+SIMULATE_AGENT_ERROR = os.getenv("SIMULATE_AGENT_ERROR", "false").lower() == "true"
+AGENT_ERROR_RANGE = float(os.getenv("AGENT_ERROR_RANGE", "0.5"))
+
+_POLICY_GATE = PolicyGate(max_quote_words=5)
+_METRICS_FILE = os.path.join(_BACKEND_ROOT, "metrics", "negotiation_metrics.jsonl")
 
 # ---------------------------------------------------------------------------
 # The Ironclad NDA System Prompt
@@ -80,7 +93,7 @@ QA_PROMPT = ChatPromptTemplate.from_messages(
 # Custom Google GenAI Embeddings Wrapper
 # ---------------------------------------------------------------------------
 class GoogleGenAIEmbeddings(Embeddings):
-    def __init__(self, model: str):
+    def __init__(self, model: str) -> None:
         self.model = model
         self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
@@ -89,7 +102,7 @@ class GoogleGenAIEmbeddings(Embeddings):
             model=self.model,
             contents=texts,
         )
-        return [e.values for e in response.embeddings]
+        return [embedding.values for embedding in response.embeddings]
 
     def embed_query(self, text: str) -> List[float]:
         response = self.client.models.embed_content(
@@ -106,46 +119,40 @@ class GoogleGenAIChat(BaseChatModel):
     model_name: str
     client: Any = None
 
-    def __init__(self, model_name: str, **kwargs):
+    def __init__(self, model_name: str, **kwargs: Any) -> None:
         super().__init__(model_name=model_name, **kwargs)
         self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
     def _generate(
-        self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs
+        self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs: Any
     ) -> ChatResult:
-        # Convert LangChain messages to Google GenAI format if needed, 
-        # or simplified text interactions if using generate_content.
-        
-        # New SDK generate_content usually takes a single prompt or a list of contents.
-        # We need to construct the history.
-        
+        # Convert LangChain messages to Google GenAI content objects.
         contents = []
         system_instruction = None
-        
-        for msg in messages:
-            if isinstance(msg, SystemMessage):
-                system_instruction = msg.content
-            elif isinstance(msg, HumanMessage):
-                contents.append(types.Content(role="user", parts=[types.Part.from_text(text=msg.content)]))
-            elif isinstance(msg, AIMessage):
-                contents.append(types.Content(role="model", parts=[types.Part.from_text(text=msg.content)]))
+
+        for message in messages:
+            if isinstance(message, SystemMessage):
+                system_instruction = message.content
+            elif isinstance(message, HumanMessage):
+                contents.append(types.Content(role="user", parts=[types.Part.from_text(text=message.content)]))
+            elif isinstance(message, AIMessage):
+                contents.append(types.Content(role="model", parts=[types.Part.from_text(text=message.content)]))
             else:
-                # Fallback for other types
-                contents.append(types.Content(role="user", parts=[types.Part.from_text(text=msg.content)]))
+                contents.append(types.Content(role="user", parts=[types.Part.from_text(text=message.content)]))
 
         config = types.GenerateContentConfig(
             temperature=0,
-            system_instruction=system_instruction
+            system_instruction=system_instruction,
         )
 
         response = self.client.models.generate_content(
             model=self.model_name,
             contents=contents,
-            config=config
+            config=config,
         )
 
-        message = AIMessage(content=response.text)
-        generation = ChatGeneration(message=message)
+        result_message = AIMessage(content=response.text)
+        generation = ChatGeneration(message=result_message)
         return ChatResult(generations=[generation])
 
     @property
@@ -153,17 +160,11 @@ class GoogleGenAIChat(BaseChatModel):
         return "google-genai-custom"
 
 
-# ---------------------------------------------------------------------------
-# Embedding helper
-# ---------------------------------------------------------------------------
 def _get_embeddings() -> GoogleGenAIEmbeddings:
     return GoogleGenAIEmbeddings(model=EMBEDDING_MODEL)
 
 
-# ---------------------------------------------------------------------------
-# Document ingestion
-# ---------------------------------------------------------------------------
-def ingest_documents(file_paths: List[str], progress_callback=None) -> int:
+def ingest_documents(file_paths: List[str], progress_callback: Any = None) -> int:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
@@ -193,9 +194,6 @@ def ingest_documents(file_paths: List[str], progress_callback=None) -> int:
     return len(all_chunks)
 
 
-# ---------------------------------------------------------------------------
-# Conversational QA chain
-# ---------------------------------------------------------------------------
 def get_qa_chain() -> ConversationalRetrievalChain:
     embeddings = _get_embeddings()
     vectorstore = Chroma(
@@ -236,9 +234,49 @@ def has_documents() -> bool:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Dual-Agent Negotiation (NDAI Paper §4)
-# ---------------------------------------------------------------------------
+def run_chain_query(
+    chain: Any,
+    question: str,
+    enforce_policy: bool = True,
+) -> dict:
+    """Run a QA chain query and optionally apply hard NDA policy checks."""
+    result = chain.invoke({"question": question})
+    answer = result.get("answer", "I couldn't generate a response.")
+
+    policy = PolicyResult(
+        allowed=True,
+        reason="allowed",
+        sanitized_text=answer,
+        violations=[],
+    )
+    if enforce_policy:
+        policy = _POLICY_GATE.enforce(answer)
+        if not policy.allowed:
+            logger.warning("Policy blocked response: %s", policy.violations)
+            answer = policy.sanitized_text
+
+    sources: List[str] = []
+    for doc in result.get("source_documents", []):
+        src = doc.metadata.get("source", "Unknown")
+        if src not in sources:
+            sources.append(src)
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "policy": {
+            "allowed": policy.allowed,
+            "reason": policy.reason,
+            "violations": policy.violations,
+        },
+    }
+
+
+def run_unrestricted_query(question: str) -> dict:
+    """Run an unrestricted query used for post-acceptance disclosure demos."""
+    chain = get_qa_chain()
+    return run_chain_query(chain=chain, question=question, enforce_policy=False)
+
 
 BUYER_AGENT_PROMPT = """\
 You are the BUYER'S AI AGENT (AB) operating inside a Trusted Execution \
@@ -304,26 +342,22 @@ def negotiate(
     current_proposed_price: float,
     negotiation_history: list,
 ) -> dict:
-    """
-    Run dual-agent negotiation: Buyer's agent evaluates and proposes,
-    Seller's agent evaluates and responds.
-    """
-    # Get relevant context from RAG
+    """Run dual-agent negotiation: buyer proposes, seller responds."""
     embeddings = _get_embeddings()
     vectorstore = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
     retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
     docs = retriever.invoke(query)
-    context = "\n\n".join([d.page_content for d in docs])
-    sources = list(set(d.metadata.get("source", "unknown") for d in docs))
+    context = "\n\n".join([doc.page_content for doc in docs])
+    sources = list(set(doc.metadata.get("source", "unknown") for doc in docs))
 
-    # Format negotiation history
-    history_str = "\n".join(
-        [f"[{role}]: {content}" for role, content in negotiation_history[-10:]]
-    ) if negotiation_history else "(First round of negotiation)"
+    history_str = (
+        "\n".join([f"[{role}]: {content}" for role, content in negotiation_history[-10:]])
+        if negotiation_history
+        else "(First round of negotiation)"
+    )
 
     client = genai.Client()
 
-    # Step 1: Buyer's Agent evaluates and proposes price
     buyer_prompt = BUYER_AGENT_PROMPT.format(
         budget=buyer_budget,
         current_price=current_proposed_price,
@@ -336,13 +370,19 @@ def negotiate(
         contents=buyer_prompt,
     )
     buyer_text = buyer_response.text
+    buyer_policy = _POLICY_GATE.enforce(buyer_text)
+    if not buyer_policy.allowed:
+        buyer_text = buyer_policy.sanitized_text
 
-    # Extract suggested price from buyer agent response
     suggested_price = _extract_price(buyer_text)
-    if suggested_price > buyer_budget:
-        suggested_price = buyer_budget  # Cap at budget
+    robustness = apply_robustness_controls(
+        base_price=suggested_price,
+        seller_threshold=seller_threshold,
+        buyer_budget=buyer_budget,
+        simulate_error=SIMULATE_AGENT_ERROR,
+    )
+    suggested_price = robustness["suggested_price"]
 
-    # Step 2: Seller's Agent evaluates the offer
     seller_prompt = SELLER_AGENT_PROMPT.format(
         threshold=seller_threshold,
         current_price=current_proposed_price,
@@ -355,18 +395,51 @@ def negotiate(
         contents=seller_prompt,
     )
     seller_text = seller_response.text
+    seller_policy = _POLICY_GATE.enforce(seller_text)
+    if not seller_policy.allowed:
+        seller_text = seller_policy.sanitized_text
+
+    _log_negotiation_metric(
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "simulate_agent_error": SIMULATE_AGENT_ERROR,
+            "noise_applied": robustness["noise_applied"],
+            "suggested_price": suggested_price,
+            "seller_threshold": seller_threshold,
+            "buyer_budget": buyer_budget,
+            "overpayment_prevented": robustness["overpayment_prevented"],
+            "under_threshold_rejected": robustness["under_threshold_rejected"],
+            "buyer_policy_allowed": buyer_policy.allowed,
+            "seller_policy_allowed": seller_policy.allowed,
+            "buyer_policy_reason": buyer_policy.reason,
+            "seller_policy_reason": seller_policy.reason,
+        }
+    )
 
     return {
         "buyer_agent_response": buyer_text,
         "seller_agent_response": seller_text,
         "suggested_price": suggested_price,
         "sources": sources,
+        "policy": {
+            "buyer_allowed": buyer_policy.allowed,
+            "seller_allowed": seller_policy.allowed,
+            "buyer_reason": buyer_policy.reason,
+            "seller_reason": seller_policy.reason,
+        },
+        "robustness": {
+            "simulate_agent_error": SIMULATE_AGENT_ERROR,
+            "noise_applied": robustness["noise_applied"],
+            "overpayment_prevented": robustness["overpayment_prevented"],
+            "under_threshold_rejected": robustness["under_threshold_rejected"],
+        },
     }
 
 
 def _extract_price(text: str) -> float:
     """Extract SUGGESTED_PRICE: <number> from agent response."""
     import re
+
     match = re.search(r"SUGGESTED_PRICE:\s*([\d.]+)", text)
     if match:
         try:
@@ -374,4 +447,38 @@ def _extract_price(text: str) -> float:
         except ValueError:
             pass
     return 0.0
+
+
+def apply_robustness_controls(
+    base_price: float,
+    seller_threshold: float,
+    buyer_budget: float,
+    simulate_error: bool,
+) -> dict:
+    """Apply noisy-agent and budget/threshold controls to price."""
+    suggested_price = max(0.0, base_price)
+    noise_applied = 0.0
+
+    if simulate_error:
+        noise_applied = random.uniform(-AGENT_ERROR_RANGE, AGENT_ERROR_RANGE)
+        suggested_price = max(0.0, suggested_price + noise_applied)
+
+    overpayment_prevented = False
+    if suggested_price > buyer_budget:
+        overpayment_prevented = True
+        suggested_price = buyer_budget
+
+    return {
+        "suggested_price": suggested_price,
+        "noise_applied": noise_applied,
+        "overpayment_prevented": overpayment_prevented,
+        "under_threshold_rejected": suggested_price < seller_threshold,
+    }
+
+
+def _log_negotiation_metric(payload: dict) -> None:
+    """Persist negotiation robustness metrics as JSON lines."""
+    os.makedirs(os.path.dirname(_METRICS_FILE), exist_ok=True)
+    with open(_METRICS_FILE, "a", encoding="utf-8") as file:
+        file.write(json.dumps(payload) + "\n")
 
