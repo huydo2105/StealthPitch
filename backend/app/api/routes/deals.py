@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app.deps import build_signed_envelope
+from app.repositories.chat_repository import chat_store, is_valid_wallet_address, normalize_wallet_address
 from app.schemas import CreateDealRequest, JoinDealRequest, NegotiateRequest, RevealRequest
 from app.services import deal_service, rag_service, tee_service
 
@@ -71,6 +72,12 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
     if not rag_service.has_documents():
         raise HTTPException(status_code=400, detail="No documents ingested yet")
 
+    normalized_wallet: str | None = None
+    if request.wallet_address:
+        if not is_valid_wallet_address(request.wallet_address):
+            raise HTTPException(status_code=400, detail="Invalid wallet_address format")
+        normalized_wallet = normalize_wallet_address(request.wallet_address)
+
     deal_service.add_negotiation_message(room_id, request.role, request.query)
 
     try:
@@ -88,6 +95,36 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
             deal_service.update_proposed_price(room_id, result["suggested_price"])
 
         quote = tee_service.get_tdx_quote()
+        deal_chat_session_id: str | None = None
+        if normalized_wallet:
+            deal_chat_session_id = chat_store.ensure_deal_session(
+                deal_room_id=room_id,
+                wallet_address=normalized_wallet,
+                participant_role=request.role,
+                title_fallback=room_id,
+            )
+            chat_store.save_message(
+                session_id=deal_chat_session_id,
+                wallet_address=normalized_wallet,
+                role="user",
+                content=request.query,
+                metadata={"transport": "http", "path": f"/api/deal/{room_id}/negotiate", "deal_room_id": room_id},
+            )
+            chat_store.save_message(
+                session_id=deal_chat_session_id,
+                wallet_address=normalized_wallet,
+                role="assistant",
+                content=result["buyer_agent_response"],
+                metadata={"agent": "buyer_agent", "deal_room_id": room_id},
+            )
+            chat_store.save_message(
+                session_id=deal_chat_session_id,
+                wallet_address=normalized_wallet,
+                role="assistant",
+                content=result["seller_agent_response"],
+                metadata={"agent": "seller_agent", "deal_room_id": room_id},
+            )
+
         payload = {
             "room_id": room_id,
             "buyer_agent": result["buyer_agent_response"],
@@ -113,6 +150,7 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
             "signature_algorithm": signed["signature_algorithm"],
             "signature_payload": signed["signature_payload"],
             "signing_public_key_pem": signed["signing_public_key_pem"],
+            "session_id": deal_chat_session_id,
             "room": deal_service.room_to_dict(deal_service.get_room(room_id)),
         }
     except Exception as exc:

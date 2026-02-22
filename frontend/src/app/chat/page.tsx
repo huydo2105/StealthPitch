@@ -82,18 +82,27 @@ function ChatContent() {
         }
 
         if (dealId) {
-            listWalletChatSessions(walletAddress)
-                .then((sessions) => {
-                    const sharedSession = sessions.find((session) => session.deal_room_id === dealId);
-                    if (sharedSession?.id) {
-                        void hydrateMessages(sharedSession.id);
-                    }
-                })
-                .catch(() => {
-                    // Keep empty state if no deal-linked session exists yet.
-                });
+            const resolveDealSession = () =>
+                listWalletChatSessions(walletAddress)
+                    .then((sessions) => {
+                        const sharedSession = sessions.find((session) => session.deal_room_id === dealId);
+                        if (sharedSession?.id) {
+                            void hydrateMessages(sharedSession.id);
+                            return true;
+                        }
+                        return false;
+                    })
+                    .catch(() => false);
+
+            void resolveDealSession();
+            const id = setInterval(() => {
+                if (!sessionId) {
+                    void resolveDealSession();
+                }
+            }, 4000);
+            return () => clearInterval(id);
         }
-    }, [walletAddress, sessionFromQuery, dealId]);
+    }, [walletAddress, sessionFromQuery, dealId, sessionId]);
 
     useEffect(() => {
         if (!sessionId) return;
@@ -150,7 +159,7 @@ function ChatContent() {
         if (room && (room.status === "funded" || room.status === "negotiating")) {
             // Deal negotiation mode
             try {
-                const result: NegotiateResponse = await negotiateDeal(room.room_id, q);
+                const result: NegotiateResponse = await negotiateDeal(room.room_id, q, participantRole || "investor", walletAddress || undefined);
                 let verified = false;
                 if (
                     result.signature &&
@@ -181,6 +190,9 @@ function ChatContent() {
                 ]);
 
                 setRoom(result.room);
+                if (result.session_id) {
+                    setSessionId(result.session_id);
+                }
             } catch (err: unknown) {
                 setMessages((prev) => [
                     ...prev,

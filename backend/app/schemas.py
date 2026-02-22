@@ -74,6 +74,7 @@ class NegotiateRequest(BaseModel):
 
     query: str
     role: str = "investor"
+    wallet_address: Optional[str] = None
 
 
 class RevealRequest(BaseModel):

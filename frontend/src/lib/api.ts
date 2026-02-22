@@ -140,6 +140,7 @@ export interface NegotiateResponse {
     signature_algorithm?: string;
     signature_payload?: string;
     signing_public_key_pem?: string;
+    session_id?: string;
     room: DealRoom;
 }
 
@@ -416,12 +417,13 @@ export async function listDeals(): Promise<DealRoom[]> {
 export async function negotiateDeal(
     roomId: string,
     query: string,
-    role: string = "investor"
+    role: string = "investor",
+    walletAddress?: string
 ): Promise<NegotiateResponse> {
     const res = await fetch(`${API_BASE}/api/deal/${roomId}/negotiate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, role }),
+        body: JSON.stringify({ query, role, wallet_address: walletAddress }),
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "Negotiation failed" }));
