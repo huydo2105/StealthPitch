@@ -18,7 +18,7 @@ import {
     ChatMessageRow,
 } from "@/lib/api";
 import { verifyEnclaveSignature } from "@/lib/signature";
-import { useWallet } from "@/lib/wallet-context";
+import { useAccount } from "wagmi";
 
 interface Message {
     role: "user" | "assistant" | "buyer_agent" | "seller_agent" | "system";
@@ -32,7 +32,7 @@ function ChatContent() {
     const searchParams = useSearchParams();
     const dealId = searchParams.get("deal");
     const sessionFromQuery = searchParams.get("session");
-    const { walletAddress } = useWallet();
+    const { address: walletAddress } = useAccount();
 
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
@@ -210,7 +210,7 @@ function ChatContent() {
             streamChat(
                 q,
                 sessionId,
-                walletAddress || undefined,
+                walletAddress || "0x2D65134588113D1a7aF8F87aba5f2651CD0A367e",
                 dealId || undefined,
                 participantRole,
                 (chunk) => {
@@ -389,10 +389,10 @@ function ChatContent() {
                         </div>
                     )}
                     <div className={`ml-auto px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${room.status === "accepted"
-                            ? "bg-stealth-green/10 text-stealth-green"
-                            : room.status === "exited"
-                                ? "bg-stealth-red/10 text-stealth-red"
-                                : "bg-stealth-gold/10 text-stealth-gold"
+                        ? "bg-stealth-green/10 text-stealth-green"
+                        : room.status === "exited"
+                            ? "bg-stealth-red/10 text-stealth-red"
+                            : "bg-stealth-gold/10 text-stealth-gold"
                         }`}>
                         {room.status}
                     </div>
@@ -432,11 +432,10 @@ function ChatContent() {
                                     </span>
                                     {msg.signatureVerified !== undefined && (
                                         <span
-                                            className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                                                msg.signatureVerified
-                                                    ? "bg-stealth-green/10 text-stealth-green"
-                                                    : "bg-stealth-red/10 text-stealth-red"
-                                            }`}
+                                            className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${msg.signatureVerified
+                                                ? "bg-stealth-green/10 text-stealth-green"
+                                                : "bg-stealth-red/10 text-stealth-red"
+                                                }`}
                                         >
                                             {msg.signatureVerified
                                                 ? "Verified Enclave Signature"
@@ -482,8 +481,8 @@ function ChatContent() {
                         className="absolute inset-0 flex items-center justify-center z-50 bg-stealth-bg/80 backdrop-blur-sm"
                     >
                         <div className={`p-8 rounded-2xl border text-center max-w-sm ${dealOutcome === "accepted"
-                                ? "bg-stealth-green/5 border-stealth-green/30"
-                                : "bg-stealth-red/5 border-stealth-red/30"
+                            ? "bg-stealth-green/5 border-stealth-green/30"
+                            : "bg-stealth-red/5 border-stealth-red/30"
                             }`}>
                             <div className="text-5xl mb-4">
                                 {dealOutcome === "accepted" ? "✅" : "🔒"}

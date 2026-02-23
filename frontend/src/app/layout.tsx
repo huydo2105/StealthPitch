@@ -3,7 +3,6 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
-import { WalletProvider } from "@/lib/wallet-context";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -14,6 +13,8 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-jetbrains",
 });
+
+import { Providers } from "@/components/Providers";
 
 export const metadata: Metadata = {
   title: "StealthPitch · TEE Agent",
@@ -31,7 +32,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased bg-stealth-bg text-stealth-text`}
       >
-        <WalletProvider>
+        <Providers>
           <div className="flex h-screen overflow-hidden">
             {/* Sidebar */}
             <Sidebar />
@@ -44,7 +45,7 @@ export default function RootLayout({
               <div className="flex-1 overflow-y-auto">{children}</div>
             </main>
           </div>
-        </WalletProvider>
+        </Providers>
       </body>
     </html>
   );

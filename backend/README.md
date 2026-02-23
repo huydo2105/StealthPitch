@@ -60,3 +60,47 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - Split `app/schemas.py` into per-domain schema modules once model count grows.
 - Add API tests under `tests/` for each router module.
 
+## Deploying to a Real TEE (dstack by Phala Network)
+
+Currently, the backend defaults to a simulated TEE environment for local development. To transition from the simulation to an actual Confidential Virtual Machine (CVM), you can use Phala Network's `dstack` orchestrator.
+
+The application is already configured to detect the hardware TEE by looking for the `/var/run/dstack.sock` Unix socket. When deployed via `dstack`, this socket is automatically injected, and the backend will start fetching real cryptographic attestation quotes.
+
+### 1. Install the Phala CLI
+
+Install the Phala Cloud CLI globally using npm:
+
+```bash
+npm install -g phala
+```
+
+### 2. Prepare the Docker Compose Configuration
+
+The root of the `backend` directory contains a `docker-compose.yml` file structured for deployment:
+
+```yaml
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - SECURITY_PROFILE=high-value
+      - PORT=8000
+```
+
+### 3. Deploy the Confidential Container
+
+With the CLI installed and the compose file ready, you can deploy your application to a TEE instance:
+
+```bash
+# Login/authenticate with Phala Cloud (if required by your environment)
+phala login
+
+# Deploy the confidential application
+phala deploy --compose docker-compose.yml
+```
+
+Once deployed, `app/services/tee_service.py` will automatically switch from simulated mode to hardware mode, reporting `"enclave_status": "ACTIVE"` and verifying signatures against the real TDX hardware quote.

@@ -184,32 +184,6 @@ export async function ingestFiles(files: File[]): Promise<IngestResponse> {
     return res.json();
 }
 
-export async function sendChat(
-    query: string,
-    sessionId?: string,
-    walletAddress?: string,
-    dealRoomId?: string,
-    participantRole?: string
-): Promise<ChatResponse> {
-    const res = await fetch(`${API_BASE}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            query,
-            session_id: sessionId,
-            wallet_address: walletAddress,
-            deal_room_id: dealRoomId,
-            participant_role: participantRole,
-        }),
-    });
-
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: "Chat failed" }));
-        throw new Error(err.detail || "Chat failed");
-    }
-    return res.json();
-}
-
 export function streamChat(
     query: string,
     sessionId: string | undefined,

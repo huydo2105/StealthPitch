@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { checkHealth, listWalletChatSessions, ChatSession } from "@/lib/api";
-import { useWallet } from "@/lib/wallet-context";
+import { useAccount } from "wagmi";
 
 const navItems = [
     { href: "/", label: "Home", icon: "🏠", desc: "NDAI Overview" },
@@ -17,7 +17,7 @@ const navItems = [
 
 export default function Sidebar() {
     const pathname = usePathname();
-    const { walletAddress } = useWallet();
+    const { address: walletAddress } = useAccount();
     const [status, setStatus] = useState<{
         ok: boolean;
         docs: boolean;
