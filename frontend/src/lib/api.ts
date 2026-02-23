@@ -388,6 +388,15 @@ export async function listDeals(): Promise<DealRoom[]> {
     return res.json();
 }
 
+export async function listWalletDeals(walletAddress: string): Promise<DealRoom[]> {
+    const res = await fetch(`${API_BASE}/api/deals/wallet/${walletAddress}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "List wallet deals failed" }));
+        throw new Error(err.detail || "List wallet deals failed");
+    }
+    return res.json();
+}
+
 export async function negotiateDeal(
     roomId: string,
     query: string,

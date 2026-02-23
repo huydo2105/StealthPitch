@@ -67,3 +67,32 @@ create policy "service_role_full_chat_session_participants"
   using (auth.role() = 'service_role')
   with check (auth.role() = 'service_role');
 
+-- ── Deal Rooms ──────────────────────────────────────────────────────
+
+create table if not exists public.deal_rooms (
+  room_id         text primary key,
+  status          text not null default 'created',
+  seller_address  text not null,
+  seller_threshold numeric not null default 0,
+  buyer_address   text not null default '',
+  buyer_budget    numeric not null default 0,
+  proposed_price  numeric not null default 0,
+  documents_ingested boolean not null default false,
+  tx_history      jsonb not null default '[]'::jsonb,
+  created_at      timestamptz not null default now(),
+  settled_at      timestamptz
+);
+
+create index if not exists deal_rooms_seller_idx
+  on public.deal_rooms (seller_address, created_at desc);
+create index if not exists deal_rooms_buyer_idx
+  on public.deal_rooms (buyer_address, created_at desc);
+
+alter table public.deal_rooms enable row level security;
+
+drop policy if exists "service_role_full_deal_rooms" on public.deal_rooms;
+create policy "service_role_full_deal_rooms"
+  on public.deal_rooms
+  for all
+  using (auth.role() = 'service_role')
+  with check (auth.role() = 'service_role');

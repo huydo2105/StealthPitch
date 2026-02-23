@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Optional
 
+from app.repositories.deal_repository import deal_store
 from app.services.blockchain_service import blockchain
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,7 @@ def create_room(seller_address: str, threshold: float) -> DealRoom:
     )
 
     _deals[room_id] = room
+    _persist(room)
     logger.info(f"Deal room {room_id} created. Threshold: {threshold} XTZ")
     return room
 
@@ -113,6 +115,7 @@ def join_room(room_id: str, buyer_address: str, budget: float) -> DealRoom:
         }
     )
 
+    _persist(room)
     logger.info(f"Investor joined room {room_id}. Budget: {budget} XTZ")
     return room
 
@@ -128,6 +131,7 @@ def add_negotiation_message(room_id: str, role: str, content: str) -> DealRoom:
     if room.status == DealStatus.FUNDED:
         room.status = DealStatus.NEGOTIATING
 
+    _persist(room)
     return room
 
 
@@ -138,6 +142,7 @@ def update_proposed_price(room_id: str, price: float) -> DealRoom:
         raise ValueError(f"Deal room {room_id} not found")
 
     room.proposed_price = price
+    _persist(room)
     return room
 
 
@@ -168,6 +173,7 @@ def accept_deal(room_id: str) -> DealRoom:
     room.status = DealStatus.ACCEPTED
     room.settled_at = datetime.now(timezone.utc).isoformat()
 
+    _persist(room)
     logger.info(f"Deal {room_id} ACCEPTED at {room.proposed_price} XTZ")
     return room
 
@@ -193,6 +199,7 @@ def exit_deal(room_id: str) -> DealRoom:
     room.settled_at = datetime.now(timezone.utc).isoformat()
     room.negotiation_history = []
 
+    _persist(room)
     logger.info(f"Deal {room_id} EXITED — investor refunded, data deleted")
     return room
 
@@ -203,12 +210,21 @@ def mark_documents_ingested(room_id: str) -> DealRoom:
     if room is None:
         raise ValueError(f"Deal room {room_id} not found")
     room.documents_ingested = True
+    _persist(room)
     return room
 
 
 def get_room(room_id: str) -> Optional[DealRoom]:
-    """Get a deal room by ID."""
-    return _deals.get(room_id)
+    """Get a deal room by ID (in-memory first, then Supabase fallback)."""
+    room = _deals.get(room_id)
+    if room is not None:
+        return room
+    row = deal_store.get_room(room_id)
+    if row is None:
+        return None
+    room = _row_to_room(row)
+    _deals[room_id] = room
+    return room
 
 
 def get_all_rooms() -> List[DealRoom]:
@@ -241,6 +257,31 @@ def room_to_dict(room: DealRoom) -> dict:
             "onchain_status": _get_onchain_status(room.room_id),
         },
     }
+
+
+def _persist(room: DealRoom) -> None:
+    """Write-through: persist room state to Supabase."""
+    try:
+        deal_store.save_room(room_to_dict(room))
+    except Exception as exc:
+        logger.error("_persist failed for %s: %s", room.room_id, exc)
+
+
+def _row_to_room(row: dict) -> DealRoom:
+    """Reconstruct a DealRoom dataclass from a Supabase row."""
+    return DealRoom(
+        room_id=row["room_id"],
+        status=DealStatus(row["status"]),
+        seller_address=row.get("seller_address", ""),
+        seller_threshold=float(row.get("seller_threshold", 0)),
+        buyer_address=row.get("buyer_address", ""),
+        buyer_budget=float(row.get("buyer_budget", 0)),
+        proposed_price=float(row.get("proposed_price", 0)),
+        documents_ingested=row.get("documents_ingested", False),
+        tx_history=row.get("tx_history", []),
+        created_at=row.get("created_at", ""),
+        settled_at=row.get("settled_at"),
+    )
 
 
 def _get_onchain_status(room_id: str) -> Optional[dict]:
