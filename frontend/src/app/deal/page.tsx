@@ -55,7 +55,7 @@ function DealRoomContent() {
                 .then(setDealHistory)
                 .catch(() => setDealHistory([]));
         fetchHistory();
-        const id = setInterval(fetchHistory, 15000);
+        const id = setInterval(fetchHistory, 60000); // 1 minute
         return () => clearInterval(id);
     }, [walletAddress]);
 
@@ -351,7 +351,7 @@ function DealRoomContent() {
 
                         {room.documents_ingested && (
                             <button
-                                onClick={() => router.push(`/chat?deal=${room.room_id}`)}
+                                onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
                                 className="w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors"
                             >
                                 Open Negotiation Chat →
@@ -399,7 +399,7 @@ function DealRoomContent() {
 
                         {room.documents_ingested ? (
                             <button
-                                onClick={() => router.push(`/chat?deal=${room.room_id}`)}
+                                onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
                                 className="w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors"
                             >
                                 Start Negotiation →
@@ -463,7 +463,7 @@ function DealRoomContent() {
                         chat via the post-accept reveal action.
                     </p>
                     <button
-                        onClick={() => router.push(`/chat?deal=${room.room_id}`)}
+                        onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
                         className="mt-3 w-full py-2 rounded-lg bg-stealth-green/10 border border-stealth-green/30 text-stealth-green text-sm font-semibold hover:bg-stealth-green/20 transition-colors"
                     >
                         Open Chat and Reveal IP
@@ -518,7 +518,7 @@ function DealHistorySection({ deals, router }: { deals: DealRoom[]; router: Retu
                         </div>
                     </div>
                     <button
-                        onClick={() => router.push(`/chat?deal=${deal.room_id}`)}
+                        onClick={() => router.push(`/chat?session=${deal.session_id}&deal=${deal.room_id}`)}
                         className="px-3 py-1.5 rounded-md bg-stealth-hover text-stealth-text hover:bg-stealth-accent/10 hover:text-stealth-accent transition-colors whitespace-nowrap"
                     >
                         View Chat →

@@ -15,6 +15,7 @@ sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
 import json
 import logging
 import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import random
 from datetime import datetime, timezone
 from typing import Any, List, Optional

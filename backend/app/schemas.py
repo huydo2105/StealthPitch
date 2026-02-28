@@ -55,6 +55,14 @@ class HealthResponse(BaseModel):
     active_deals: int
 
 
+class DealHumanMessageRequest(BaseModel):
+    """Input payload for a human messaging in a deal room."""
+    
+    sender: str
+    role: str
+    content: str
+
+
 class CreateDealRequest(BaseModel):
     """Input payload for deal creation."""
 
@@ -93,7 +101,7 @@ class WalletSessionsResponse(BaseModel):
 class WalletMessagesResponse(BaseModel):
     """Response payload for wallet-scoped message list."""
 
-    wallet_address: str
+    wallet_address: Optional[str] = None
     session_id: str
     messages: List[Dict]
 

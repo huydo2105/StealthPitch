@@ -166,7 +166,7 @@ class SupabaseChatStore:
             self._upsert_participant(
                 session_id=session_id,
                 wallet_address=normalized,
-                role="member",
+                role=role,
             )
             self.touch_session(session_id=session_id, wallet_address=normalized)
         except Exception as exc:
@@ -202,7 +202,6 @@ class SupabaseChatStore:
 
     def list_messages(
         self,
-        wallet_address: str,
         session_id: str,
         limit: int = 200,
         offset: int = 0,
@@ -211,11 +210,9 @@ class SupabaseChatStore:
         if not self.enabled:
             return []
         try:
-            normalized = normalize_wallet_address(wallet_address)
             participant = (
                 self._client.table("chat_session_participants")
                 .select("session_id")
-                .eq("wallet_address", normalized)
                 .eq("session_id", session_id)
                 .limit(1)
                 .execute()

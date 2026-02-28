@@ -238,25 +238,19 @@ async def list_wallet_sessions(
     return WalletSessionsResponse(wallet_address=normalized_wallet, sessions=sessions)
 
 
-@router.get("/api/chat/sessions/{wallet_address}/{session_id}", response_model=WalletMessagesResponse)
+@router.get("/api/chat/sessions/{session_id}/messages", response_model=WalletMessagesResponse)
 async def list_wallet_messages(
-    wallet_address: str,
     session_id: str,
     limit: int = 200,
     offset: int = 0,
 ) -> WalletMessagesResponse:
     """List messages for a wallet-scoped chat session."""
-    if not is_valid_wallet_address(wallet_address):
-        raise HTTPException(status_code=400, detail="Invalid wallet_address format")
-    normalized_wallet = normalize_wallet_address(wallet_address)
     messages = chat_store.list_messages(
-        wallet_address=normalized_wallet,
         session_id=session_id,
         limit=max(1, min(limit, 1000)),
         offset=max(0, offset),
     )
     return WalletMessagesResponse(
-        wallet_address=normalized_wallet,
         session_id=session_id,
         messages=messages,
     )

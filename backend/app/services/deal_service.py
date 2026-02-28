@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Optional
 
+from app.repositories.chat_repository import chat_store
 from app.repositories.deal_repository import deal_store
 from app.services.blockchain_service import blockchain
 
@@ -40,6 +41,7 @@ class NegotiationMessage:
 @dataclass
 class DealRoom:
     room_id: str
+    session_id: str
     status: DealStatus
 
     # Founder (Seller) side
@@ -70,8 +72,16 @@ def create_room(seller_address: str, threshold: float) -> DealRoom:
     """Founder creates a new deal room with acceptance threshold."""
     room_id = str(uuid.uuid4())[:8]
 
+    session_id = chat_store.ensure_deal_session(
+        deal_room_id=room_id,
+        wallet_address=seller_address,
+        participant_role="founder",
+        title_fallback=f"Deal Room {room_id}"
+    )
+
     room = DealRoom(
         room_id=room_id,
+        session_id=session_id,
         status=DealStatus.CREATED,
         seller_address=seller_address,
         seller_threshold=threshold,
@@ -104,6 +114,13 @@ def join_room(room_id: str, buyer_address: str, budget: float) -> DealRoom:
     room.buyer_address = buyer_address
     room.buyer_budget = budget
     room.status = DealStatus.FUNDED
+
+    chat_store.ensure_deal_session(
+        deal_room_id=room_id,
+        wallet_address=buyer_address,
+        participant_role="investor",
+        title_fallback=f"Deal Room {room_id}"
+    )
 
     amount_wei = int(budget * 1e18)
     tx_result = blockchain.deposit_funds(room_id, amount_wei)
@@ -236,6 +253,7 @@ def room_to_dict(room: DealRoom) -> dict:
     """Serialize a DealRoom to a JSON-safe dict."""
     return {
         "room_id": room.room_id,
+        "session_id": room.session_id,
         "status": room.status.value,
         "seller_address": room.seller_address,
         "seller_threshold": room.seller_threshold,
@@ -271,6 +289,7 @@ def _row_to_room(row: dict) -> DealRoom:
     """Reconstruct a DealRoom dataclass from a Supabase row."""
     return DealRoom(
         room_id=row["room_id"],
+        session_id=row.get("session_id", ""),
         status=DealStatus(row["status"]),
         seller_address=row.get("seller_address", ""),
         seller_threshold=float(row.get("seller_threshold", 0)),

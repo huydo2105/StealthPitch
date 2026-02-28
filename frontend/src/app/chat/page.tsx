@@ -10,9 +10,10 @@ import {
     exitDeal,
     getDeal,
     revealDeal,
-    listWalletChatSessions,
-    listWalletChatMessages,
+    fetchChatSessions,
+    fetchChatMessages,
     subscribeToSessionMessages,
+    sendDealHumanMessage,
     DealRoom,
     NegotiateResponse,
     ChatMessageRow,
@@ -21,11 +22,13 @@ import { verifyEnclaveSignature } from "@/lib/signature";
 import { useAccount } from "wagmi";
 
 interface Message {
-    role: "user" | "assistant" | "buyer_agent" | "seller_agent" | "system";
+    id?: string;
+    role: "user" | "buyer_agent" | "seller_agent" | "system" | "founder" | "investor";
     content: string;
     sources?: string[];
     suggestedPrice?: number;
     signatureVerified?: boolean;
+    sender?: string;
 }
 
 function ChatContent() {
@@ -45,29 +48,26 @@ function ChatContent() {
     const bottomRef = useRef<HTMLDivElement>(null);
     const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
-    // Load deal room if deal ID is present
-    useEffect(() => {
-        if (dealId) {
-            getDeal(dealId)
-                .then(setRoom)
-                .catch(() => setRoom(null));
-        }
-    }, [dealId]);
-
     useEffect(() => {
         if (!walletAddress) return;
 
         const hydrateMessages = (targetSessionId: string): Promise<void> =>
-            listWalletChatMessages(walletAddress, targetSessionId)
+            fetchChatMessages(targetSessionId)
                 .then((rows: ChatMessageRow[]) => {
-                    seenMessageIdsRef.current = new Set(rows.map((row) => String(row.id)));
+                    const humanAgentRows = rows.filter((r) =>
+                        ["user", "assistant", "system", "founder", "investor", "agent", "buyer_agent", "seller_agent"].includes(r.role)
+                    );
+                    seenMessageIdsRef.current = new Set(humanAgentRows.map((row) => String(row.id)));
                     setMessages(
-                        rows.map((row) => ({
-                            role: row.role,
+                        humanAgentRows.map((row) => ({
+                            id: String(row.id),
+                            role: row.role as Message["role"],
                             content: row.content,
+                            sender: row.metadata?.sender as string | undefined,
                             sources: Array.isArray(row.metadata?.sources)
                                 ? (row.metadata.sources as string[])
                                 : undefined,
+                            suggestedPrice: row.metadata?.suggested_price as number | undefined,
                         }))
                     );
                     setSessionId(targetSessionId);
@@ -76,37 +76,31 @@ function ChatContent() {
                     // Keep empty state on history load failure.
                 });
 
+        fetchChatSessions(walletAddress).then((sessions) => {
+            const session = sessions.find((s) => s.id === sessionFromQuery);
+            if (session && session.deal_room_id) {
+                getDeal(session.deal_room_id)
+                    .then(setRoom)
+                    .catch(() => setRoom(null));
+            }
+            const sharedSession = sessions.find((session) => session.deal_room_id === dealId);
+            if (sharedSession?.id) {
+                void hydrateMessages(sharedSession.id);
+                return true;
+            }
+        });
+
         if (sessionFromQuery) {
             void hydrateMessages(sessionFromQuery);
             return;
-        }
-
-        if (dealId) {
-            const resolveDealSession = () =>
-                listWalletChatSessions(walletAddress)
-                    .then((sessions) => {
-                        const sharedSession = sessions.find((session) => session.deal_room_id === dealId);
-                        if (sharedSession?.id) {
-                            void hydrateMessages(sharedSession.id);
-                            return true;
-                        }
-                        return false;
-                    })
-                    .catch(() => false);
-
-            void resolveDealSession();
-            const id = setInterval(() => {
-                if (!sessionId) {
-                    void resolveDealSession();
-                }
-            }, 4000);
-            return () => clearInterval(id);
         }
     }, [walletAddress, sessionFromQuery, dealId, sessionId]);
 
     useEffect(() => {
         if (!sessionId) return;
         const unsubscribe = subscribeToSessionMessages(sessionId, (row) => {
+            if (!["user", "assistant", "system", "founder", "investor", "agent", "buyer_agent", "seller_agent"].includes(row.role)) return;
+
             const messageId = String(row.id);
             if (seenMessageIdsRef.current.has(messageId)) {
                 return;
@@ -116,11 +110,16 @@ function ChatContent() {
             const sources = Array.isArray(row.metadata?.sources)
                 ? (row.metadata.sources as string[])
                 : undefined;
+            const suggestedPrice = row.metadata?.suggested_price as number | undefined;
+
             setMessages((prev) => {
                 const nextMessage: Message = {
-                    role: row.role,
+                    id: messageId,
+                    role: row.role as Message["role"],
                     content: row.content,
+                    sender: row.metadata?.sender as string | undefined,
                     sources,
+                    suggestedPrice,
                 };
                 const last = prev[prev.length - 1];
                 if (last && last.role === nextMessage.role && last.content === nextMessage.content) {
@@ -140,11 +139,10 @@ function ChatContent() {
     }, [messages]);
 
     const handleSend = async () => {
-        const q = input.trim();
-        if (!q || loading) return;
+        const text = input.trim();
+        if (!text || loading) return;
 
         setInput("");
-        setMessages((prev) => [...prev, { role: "user", content: q }]);
         setLoading(true);
 
         const participantRole =
@@ -157,69 +155,103 @@ function ChatContent() {
                 : undefined;
 
         if (room && (room.status === "funded" || room.status === "negotiating")) {
-            // Deal negotiation mode
-            try {
-                const result: NegotiateResponse = await negotiateDeal(room.room_id, q, participantRole || "investor", walletAddress || undefined);
-                let verified = false;
-                if (
-                    result.signature &&
-                    result.signature_payload &&
-                    result.signing_public_key_pem
-                ) {
-                    verified = await verifyEnclaveSignature({
-                        payload: result.signature_payload,
-                        signatureB64: result.signature,
-                        publicKeyPem: result.signing_public_key_pem,
-                    });
+            // -- DEAL ROOM COMMAND ROUTING --
+
+            // 1. /propose <amount>
+            const proposeMatch = text.match(/^\s*\/propose\s+([\d.]+)/i);
+            if (proposeMatch) {
+                const amount = proposeMatch[1];
+                try {
+                    const result: NegotiateResponse = await negotiateDeal(
+                        room.room_id,
+                        `Proposing ${amount} XTZ`, // The actual payload we send internally
+                        participantRole || "investor",
+                        walletAddress || undefined
+                    );
+                    // Update room state (Supabase will handle the chat history via realtime push)
+                    setRoom(result.room);
+                    if (result.session_id) {
+                        setSessionId(result.session_id);
+                    }
+                } catch (err: unknown) {
+                    setMessages((prev) => [
+                        ...prev,
+                        {
+                            role: "system",
+                            content: `Error: ${err instanceof Error ? err.message : "Negotiation failed"}`,
+                        },
+                    ]);
                 }
+                setLoading(false);
+                return;
+            }
 
-                setMessages((prev) => [
-                    ...prev,
-                    {
-                        role: "buyer_agent",
-                        content: result.buyer_agent,
-                        suggestedPrice: result.suggested_price,
-                        signatureVerified: verified,
-                    },
-                    {
-                        role: "seller_agent",
-                        content: result.seller_agent,
-                        sources: result.sources,
-                        signatureVerified: verified,
-                    },
-                ]);
+            // 2. /accept
+            if (/^\s*\/accept/i.test(text)) {
+                await handleAccept();
+                setLoading(false);
+                return;
+            }
 
-                setRoom(result.room);
-                if (result.session_id) {
-                    setSessionId(result.session_id);
+            // 3. /exit
+            if (/^\s*\/exit/i.test(text)) {
+                await handleExit();
+                setLoading(false);
+                return;
+            }
+
+            // 4. Default: Send human message (and RAG if @Agent is in text)
+            try {
+                if (walletAddress && (participantRole === "founder" || participantRole === "investor")) {
+                    // Optimistic UI update
+                    const tempId = `temp-${Date.now()}`;
+                    setMessages((prev) => [
+                        ...prev,
+                        {
+                            id: tempId,
+                            role: participantRole,
+                            content: text,
+                            sender: walletAddress,
+                        },
+                    ]);
+
+                    const res = await sendDealHumanMessage(room.room_id, walletAddress, participantRole, text);
+                    if (!sessionId && res.session_id) {
+                        setSessionId(res.session_id);
+                    }
+                } else {
+                    throw new Error("Only founder or investor can chat here.");
                 }
             } catch (err: unknown) {
                 setMessages((prev) => [
                     ...prev,
                     {
                         role: "system",
-                        content: `Error: ${err instanceof Error ? err.message : "Negotiation failed"}`,
+                        content: `⚠️ Send failed: ${err instanceof Error ? err.message : "Unknown error"}`,
                     },
                 ]);
             }
         } else {
             // Standard chat mode (no deal)
-            let assistantContent = "";
-            setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+            let systemContent = "";
+            const tempSysId1 = `sys-${Date.now()}`;
+            const tempSysId2 = `sys-${Date.now() + 1}`;
+            setMessages((prev) => [...prev, { id: tempSysId1, role: "user", content: text }, { id: tempSysId2, role: "system", content: "" }]);
 
             streamChat(
-                q,
+                text,
                 sessionId,
                 walletAddress || "0x2D65134588113D1a7aF8F87aba5f2651CD0A367e",
                 dealId || undefined,
                 participantRole,
                 (chunk) => {
-                    assistantContent += chunk;
+                    systemContent += chunk;
                     setMessages((prev) => {
                         const updated = [...prev];
                         updated[updated.length - 1] = {
-                            role: "assistant",
-                            content: assistantContent,
+                            id: tempSysId2,
+                            role: "system",
+                            content: systemContent,
                         };
                         return updated;
                     });
@@ -230,6 +262,7 @@ function ChatContent() {
                         const updated = [...prev];
                         updated[updated.length - 1] = {
                             ...updated[updated.length - 1],
+                            id: payload.sessionId ? `${payload.sessionId}-${Date.now()}` : tempSysId2,
                             sources: payload.sources,
                         };
                         return updated;
@@ -311,12 +344,13 @@ function ChatContent() {
         setLoading(false);
     };
 
-    const roleStyles: Record<string, { bg: string; label: string; labelColor: string }> = {
-        user: { bg: "bg-stealth-accent/10 border-stealth-accent/20", label: "You", labelColor: "text-stealth-accent" },
-        assistant: { bg: "bg-stealth-surface border-stealth-border", label: "TEE Agent", labelColor: "text-stealth-green" },
-        buyer_agent: { bg: "bg-blue-500/5 border-blue-500/20", label: "Buyer's Agent (AB)", labelColor: "text-blue-400" },
-        seller_agent: { bg: "bg-emerald-500/5 border-emerald-500/20", label: "Seller's Agent (AS)", labelColor: "text-emerald-400" },
-        system: { bg: "bg-stealth-gold/5 border-stealth-gold/20", label: "System", labelColor: "text-stealth-gold" },
+    const roleStyles: Record<string, { bg: string; label: string; labelColor: string; align?: string }> = {
+        user: { bg: "bg-stealth-accent/10 border-stealth-accent/20", label: "You", labelColor: "text-stealth-accent", align: "justify-end" },
+        founder: { bg: "bg-stealth-accent/15 border border-stealth-accent/30", label: "🚀 Founder", labelColor: "text-stealth-accent", align: "justify-start" },
+        investor: { bg: "bg-stealth-surface border border-stealth-border", label: "💼 Investor", labelColor: "text-stealth-muted", align: "justify-start" },
+        buyer_agent: { bg: "bg-blue-500/5 border border-blue-500/20", label: "🤖 Buyer's Agent (AB)", labelColor: "text-blue-400", align: "justify-start" },
+        seller_agent: { bg: "bg-emerald-500/5 border border-emerald-500/20", label: "🤖 Seller's Agent (AS)", labelColor: "text-emerald-400", align: "justify-start" },
+        system: { bg: "bg-stealth-gold/5 border border-stealth-gold/20", label: "System", labelColor: "text-stealth-gold", align: "justify-center w-full" },
     };
 
     const handleReveal = async () => {
@@ -335,7 +369,7 @@ function ChatContent() {
             setMessages((prev) => [
                 ...prev,
                 {
-                    role: "assistant",
+                    role: "system",
                     content: result.answer,
                     sources: result.sources,
                     signatureVerified: verified,

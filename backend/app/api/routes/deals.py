@@ -12,7 +12,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from app.deps import build_signed_envelope
 from app.repositories.chat_repository import chat_store, is_valid_wallet_address, normalize_wallet_address
 from app.repositories.deal_repository import deal_store
-from app.schemas import CreateDealRequest, JoinDealRequest, NegotiateRequest, RevealRequest
+from app.schemas import CreateDealRequest, DealHumanMessageRequest, JoinDealRequest, NegotiateRequest, RevealRequest
 from app.services import deal_service, rag_service, tee_service
 
 router = APIRouter(tags=["deals"])
@@ -113,22 +113,22 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
             chat_store.save_message(
                 session_id=deal_chat_session_id,
                 wallet_address=normalized_wallet,
-                role="user",
+                role=request.role,
                 content=request.query,
                 metadata={"transport": "http", "path": f"/api/deal/{room_id}/negotiate", "deal_room_id": room_id},
             )
             chat_store.save_message(
                 session_id=deal_chat_session_id,
                 wallet_address=normalized_wallet,
-                role="assistant",
-                content=result["buyer_agent_response"],
-                metadata={"agent": "buyer_agent", "deal_room_id": room_id},
+                role="agent",
+                content=f"**Buyer Agent Assessment:**\n{result['buyer_agent_response']}",
+                metadata={"agent": "buyer_agent", "deal_room_id": room_id, "suggested_price": result.get("suggested_price", 0)},
             )
             chat_store.save_message(
                 session_id=deal_chat_session_id,
                 wallet_address=normalized_wallet,
-                role="assistant",
-                content=result["seller_agent_response"],
+                role="agent",
+                content=f"**Seller Agent Response:**\n{result['seller_agent_response']}",
                 metadata={"agent": "seller_agent", "deal_room_id": room_id},
             )
 
@@ -162,6 +162,79 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Negotiation error: {str(exc)}")
+
+
+@router.post("/api/deal/{room_id}/message")
+async def send_human_message(room_id: str, request: DealHumanMessageRequest) -> Dict[str, Any]:
+    """Handle a direct human message in the deal room, and optionally trigger the Agent."""
+    room = deal_service.get_room(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Deal room not found")
+
+    if not is_valid_wallet_address(request.sender):
+        raise HTTPException(status_code=400, detail="Invalid sender address format")
+
+    wallet_address = normalize_wallet_address(request.sender)
+
+    # 1. Ensure a session exists
+    session_id = chat_store.ensure_deal_session(
+        deal_room_id=room_id,
+        wallet_address=wallet_address,
+        participant_role=request.role,
+        title_fallback=room_id,
+    )
+
+    # 2. Persist the human message (this emits a Supabase event)
+    chat_store.save_message(
+        session_id=session_id,
+        wallet_address=wallet_address,
+        role=request.role,
+        content=request.content,
+        metadata={"sender": wallet_address, "deal_room_id": room_id},
+    )
+
+    agent_replied = False
+
+    # 3. Check if @Agent was mentioned
+    if "@agent" in request.content.lower():
+        if not rag_service.has_documents():
+            # If no docs, agent replies with a canned message
+            chat_store.save_message(
+                session_id=session_id,
+                wallet_address=wallet_address,
+                role="agent",
+                content="I am present, but no documents have been ingested yet. Please ingest the files first.",
+                metadata={"agent": "system", "deal_room_id": room_id},
+            )
+            agent_replied = True
+        else:
+            try:
+                # 4. Agent answers via RAG pipeline (this enforces PolicyGate rules)
+                chain = rag_service.get_qa_chain()
+                result = rag_service.run_chain_query(chain, request.content, [])
+                
+                chat_store.save_message(
+                    session_id=session_id,
+                    wallet_address=wallet_address,
+                    role="agent",
+                    content=result.get("answer", "I could not generate a response."),
+                    metadata={
+                        "agent": "tee_agent",
+                        "deal_room_id": room_id,
+                        "sources": result.get("sources", [])
+                    },
+                )
+                agent_replied = True
+            except Exception as e:
+                chat_store.save_message(
+                    session_id=session_id,
+                    wallet_address=wallet_address,
+                    role="system",
+                    content=f"Agent error: {str(e)}",
+                    metadata={"deal_room_id": room_id},
+                )
+
+    return {"session_id": session_id, "agent_replied": agent_replied}
 
 
 @router.post("/api/deal/{room_id}/accept")

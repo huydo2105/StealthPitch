@@ -47,7 +47,7 @@ export interface ChatMessageRow {
     id: string;
     session_id: string;
     wallet_address: string;
-    role: "user" | "assistant" | "buyer_agent" | "seller_agent" | "system";
+    role: "user" | "assistant" | "buyer_agent" | "seller_agent" | "system" | "founder" | "investor" | "agent";
     content: string;
     metadata: Record<string, unknown>;
     created_at: string;
@@ -124,6 +124,7 @@ export interface DealRoom {
         explorer: string;
         onchain_status: Record<string, unknown> | null;
     };
+    session_id: string;
 }
 
 export interface NegotiateResponse {
@@ -140,7 +141,7 @@ export interface NegotiateResponse {
     signature_algorithm?: string;
     signature_payload?: string;
     signing_public_key_pem?: string;
-    session_id?: string;
+    session_id: string;
     room: DealRoom;
 }
 
@@ -277,7 +278,7 @@ export function streamChat(
     return controller;
 }
 
-export async function listWalletChatSessions(walletAddress: string): Promise<ChatSession[]> {
+export async function fetchChatSessions(walletAddress: string): Promise<ChatSession[]> {
     const res = await fetch(`${API_BASE}/api/chat/sessions/${walletAddress}`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "List sessions failed" }));
@@ -287,11 +288,10 @@ export async function listWalletChatSessions(walletAddress: string): Promise<Cha
     return data.sessions || [];
 }
 
-export async function listWalletChatMessages(
-    walletAddress: string,
+export async function fetchChatMessages(
     sessionId: string
 ): Promise<ChatMessageRow[]> {
-    const res = await fetch(`${API_BASE}/api/chat/sessions/${walletAddress}/${sessionId}`);
+    const res = await fetch(`${API_BASE}/api/chat/sessions/${sessionId}/messages`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "List messages failed" }));
         throw new Error(err.detail || "List messages failed");
@@ -469,3 +469,27 @@ export async function revealDeal(roomId: string, query: string): Promise<RevealR
     return res.json();
 }
 
+// ── Deal Room Human Chat ────────────────────────────────────────────
+
+export interface SendDealMessageResponse {
+    session_id: string;
+    agent_replied: boolean;
+}
+
+export async function sendDealHumanMessage(
+    roomId: string,
+    sender: string,
+    role: "founder" | "investor",
+    content: string
+): Promise<SendDealMessageResponse> {
+    const res = await fetch(`${API_BASE}/api/deal/${roomId}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender, role, content }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Send message failed" }));
+        throw new Error(err.detail || "Send message failed");
+    }
+    return res.json();
+}

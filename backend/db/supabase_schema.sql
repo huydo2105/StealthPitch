@@ -30,7 +30,7 @@ create table if not exists public.chat_messages (
   id bigserial primary key,
   session_id uuid not null references public.chat_sessions(id) on delete cascade,
   wallet_address text not null,
-  role text not null check (role in ('user', 'assistant', 'system')),
+  role text not null check (role in ('user', 'assistant', 'system', 'founder', 'investor', 'agent', 'buyer_agent', 'seller_agent')),
   content text not null,
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
@@ -41,6 +41,13 @@ create index if not exists chat_messages_session_idx
 
 create index if not exists chat_messages_wallet_idx
   on public.chat_messages (wallet_address, created_at desc);
+
+-- Enable real-time publication for chat_messages
+-- This allows frontend clients to subscribe via listen()
+begin;
+  -- supabase_realtime publication may already exist, so we simply add to it
+  alter publication supabase_realtime add table public.chat_messages;
+commit;
 
 alter table public.chat_sessions enable row level security;
 alter table public.chat_session_participants enable row level security;
@@ -60,6 +67,14 @@ create policy "service_role_full_chat_messages"
   using (auth.role() = 'service_role')
   with check (auth.role() = 'service_role');
 
+-- Enable read access for anonymous users so Realtime WebSockets can broadcast new messages.
+-- Without this, Supabase RLS silently blocks the real-time events for unauthenticated frontends.
+drop policy if exists "anon_select_chat_messages" on public.chat_messages;
+create policy "anon_select_chat_messages"
+  on public.chat_messages
+  for select
+  using (true);
+
 drop policy if exists "service_role_full_chat_session_participants" on public.chat_session_participants;
 create policy "service_role_full_chat_session_participants"
   on public.chat_session_participants
@@ -71,6 +86,7 @@ create policy "service_role_full_chat_session_participants"
 
 create table if not exists public.deal_rooms (
   room_id         text primary key,
+  session_id      text,
   status          text not null default 'created',
   seller_address  text not null,
   seller_threshold numeric not null default 0,

@@ -61,6 +61,7 @@ class SupabaseDealStore:
         try:
             payload = {
                 "room_id": room_dict["room_id"],
+                "session_id": room_dict["session_id"],  
                 "status": room_dict["status"],
                 "seller_address": _normalize(room_dict.get("seller_address", "")),
                 "seller_threshold": room_dict.get("seller_threshold", 0),

@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { checkHealth, listWalletChatSessions, ChatSession } from "@/lib/api";
+import { checkHealth, fetchChatSessions, ChatSession } from "@/lib/api";
 import { useAccount } from "wagmi";
 
 const navItems = [
@@ -17,6 +17,9 @@ const navItems = [
 
 export default function Sidebar() {
     const pathname = usePathname();
+    const searchParams = useSearchParams();
+    const activeSessionId = searchParams.get("session");
+    const activeDealId = searchParams.get("deal");
     const { address: walletAddress } = useAccount();
     const [status, setStatus] = useState<{
         ok: boolean;
@@ -33,7 +36,7 @@ export default function Sidebar() {
                 )
                 .catch(() => setStatus((s) => ({ ...s, ok: false })));
         poll();
-        const id = setInterval(poll, 5000);
+        const id = setInterval(poll, 120000); // 120 seconds
         return () => clearInterval(id);
     }, []);
 
@@ -43,11 +46,11 @@ export default function Sidebar() {
             return;
         }
         const fetchSessions = () =>
-            listWalletChatSessions(walletAddress)
+            fetchChatSessions(walletAddress)
                 .then((sessions) => setChatSessions(sessions.slice(0, 6)))
                 .catch(() => setChatSessions([]));
         fetchSessions();
-        const id = setInterval(fetchSessions, 10000);
+        const id = setInterval(fetchSessions, 120000); // 120 seconds
         return () => clearInterval(id);
     }, [walletAddress]);
 
@@ -91,16 +94,22 @@ export default function Sidebar() {
                                     <p className="text-[10px] uppercase tracking-wide text-stealth-muted/80">
                                         Recent Chats
                                     </p>
-                                    {chatSessions.map((session) => (
-                                        <Link
-                                            key={session.id}
-                                            href={`/chat?session=${session.id}`}
-                                            className="block text-[11px] rounded-md px-2 py-1 text-stealth-muted hover:text-stealth-text hover:bg-stealth-hover truncate"
-                                            title={session.deal_room_id || session.title || session.id}
-                                        >
-                                            {session.deal_room_id || session.title || `Session ${session.id.slice(0, 8)}`}
-                                        </Link>
-                                    ))}
+                                    {chatSessions.map((session) => {
+                                        const isActiveChat = activeSessionId === session.id || (activeDealId && activeDealId === session.deal_room_id);
+                                        return (
+                                            <Link
+                                                key={session.id}
+                                                href={`/chat?session=${session.id}${session.deal_room_id ? `&deal=${session.deal_room_id}` : ""}`}
+                                                className={`block text-[11px] rounded-md px-2 py-1 truncate transition-colors ${isActiveChat
+                                                    ? "text-stealth-accent bg-stealth-accent/10 font-semibold"
+                                                    : "text-stealth-muted hover:text-stealth-text hover:bg-stealth-hover"
+                                                    }`}
+                                                title={session.deal_room_id || session.title || session.id}
+                                            >
+                                                {session.deal_room_id || session.title || `Session ${session.id.slice(0, 8)}`}
+                                            </Link>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
