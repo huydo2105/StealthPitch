@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { motion } from "framer-motion";
 import { checkHealth, fetchChatSessions, ChatSession } from "@/lib/api";
 import { useAccount } from "wagmi";
@@ -15,7 +15,7 @@ const navItems = [
     { href: "/attestation", label: "Attestation", icon: "🔐", desc: "TEE Proof" },
 ];
 
-export default function Sidebar() {
+function SidebarInner() {
     const pathname = usePathname();
     const searchParams = useSearchParams();
     const activeSessionId = searchParams.get("session");
@@ -152,5 +152,13 @@ export default function Sidebar() {
                 )}
             </div>
         </aside>
+    );
+}
+
+export default function Sidebar() {
+    return (
+        <Suspense fallback={<aside className="w-56 h-screen sticky top-0 bg-stealth-surface border-r border-stealth-border" />}>
+            <SidebarInner />
+        </Suspense>
     );
 }

@@ -87,19 +87,9 @@ def create_room(seller_address: str, threshold: float) -> DealRoom:
         seller_threshold=threshold,
     )
 
-    threshold_wei = int(threshold * 1e18)
-    tx_result = blockchain.create_deal_onchain(room_id, seller_address, threshold_wei)
-    room.tx_history.append(
-        {
-            "action": "create_deal",
-            "result": tx_result,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-
     _deals[room_id] = room
     _persist(room)
-    logger.info(f"Deal room {room_id} created. Threshold: {threshold} XTZ")
+    logger.info(f"Deal room {room_id} created (off-chain). Threshold: {threshold} XTZ")
     return room
 
 
@@ -113,7 +103,7 @@ def join_room(room_id: str, buyer_address: str, budget: float) -> DealRoom:
 
     room.buyer_address = buyer_address
     room.buyer_budget = budget
-    room.status = DealStatus.FUNDED
+    # Status stays CREATED until the frontend confirms the on-chain depositFunds tx
 
     chat_store.ensure_deal_session(
         deal_room_id=room_id,
@@ -122,18 +112,48 @@ def join_room(room_id: str, buyer_address: str, budget: float) -> DealRoom:
         title_fallback=f"Deal Room {room_id}"
     )
 
-    amount_wei = int(budget * 1e18)
-    tx_result = blockchain.deposit_funds(room_id, amount_wei)
+    _persist(room)
+    logger.info(f"Investor joined room {room_id} (off-chain). Budget: {budget} XTZ — awaiting on-chain confirmation")
+    return room
+
+
+def confirm_tx(room_id: str, action: str, tx_hash: str) -> "DealRoom":
+    """Frontend calls this after MetaMask confirms a wagmi tx.
+
+    action="create"  → records the tx hash; status stays CREATED.
+    action="deposit" → records the tx hash; status advances to FUNDED.
+    """
+    room = get_room(room_id)
+    if room is None:
+        raise ValueError(f"Deal room {room_id} not found")
+
+    explorer_link = f"https://shadownet.explorer.etherlink.com/tx/{tx_hash}"
     room.tx_history.append(
         {
-            "action": "deposit_funds",
-            "result": tx_result,
+            "action": action,
+            "result": {
+                "tx_hash": tx_hash,
+                "status": "confirmed_by_frontend",
+                "explorer_link": explorer_link,
+            },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
 
+    if action == "deposit":
+        if room.status != DealStatus.CREATED:
+            raise ValueError(
+                f"Cannot confirm deposit for room {room_id} in state {room.status} "
+                "(expected 'created')"
+            )
+        room.status = DealStatus.FUNDED
+        logger.info(f"Room {room_id} → FUNDED after on-chain deposit confirmed ({tx_hash})")
+    elif action == "create":
+        logger.info(f"Room {room_id} createDeal tx confirmed on-chain ({tx_hash})")
+    else:
+        raise ValueError(f"Unknown confirm_tx action: {action!r}")
+
     _persist(room)
-    logger.info(f"Investor joined room {room_id}. Budget: {budget} XTZ")
     return room
 
 

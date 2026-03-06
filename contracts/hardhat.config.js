@@ -17,7 +17,7 @@ module.exports = {
         },
     },
     paths: {
-        sources: "./",           // NDAIEscrow.sol is in the contracts/ root
+        sources: "./contracts",
         artifacts: "./artifacts",
         cache: "./cache",
         tests: "./test",

@@ -12,7 +12,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from app.deps import build_signed_envelope
 from app.repositories.chat_repository import chat_store, is_valid_wallet_address, normalize_wallet_address
 from app.repositories.deal_repository import deal_store
-from app.schemas import CreateDealRequest, DealHumanMessageRequest, JoinDealRequest, NegotiateRequest, RevealRequest
+from app.schemas import ConfirmTxRequest, CreateDealRequest, DealHumanMessageRequest, JoinDealRequest, NegotiateRequest, RevealRequest
 from app.services import deal_service, rag_service, tee_service
 
 router = APIRouter(tags=["deals"])
@@ -66,6 +66,22 @@ async def list_deals() -> List[Dict[str, Any]]:
 async def list_wallet_deals(wallet_address: str) -> List[Dict[str, Any]]:
     """Return deal rooms involving this wallet, newest first."""
     return deal_store.list_rooms_by_wallet(wallet_address)
+
+
+@router.post("/api/deal/{room_id}/confirm_tx")
+async def confirm_tx(room_id: str, request: ConfirmTxRequest) -> Dict[str, Any]:
+    """Frontend calls this after MetaMask confirms a wagmi tx.
+
+    action='create'  → records tx hash (status stays 'created').
+    action='deposit' → records tx hash and sets status → 'funded'.
+    """
+    try:
+        room = deal_service.confirm_tx(room_id, request.action, request.tx_hash)
+        return deal_service.room_to_dict(room)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"confirm_tx failed: {str(exc)}")
 
 
 @router.post("/api/deal/{room_id}/negotiate")

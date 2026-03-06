@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useAccount, useConnect, useDisconnect } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useBalance } from "wagmi";
 import { metaMask } from "wagmi/connectors";
 import { useEffect, useState, useRef } from "react";
+import { formatBalance } from "@/lib/util";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function Header() {
@@ -11,6 +12,9 @@ export default function Header() {
     const { connect } = useConnect();
     const { disconnect } = useDisconnect();
     const [mounted, setMounted] = useState(false);
+
+    // Fetch balance
+    const { data: balanceData } = useBalance({ address });
 
     // Dropdown state
     const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -68,7 +72,7 @@ export default function Header() {
             <div className="relative" ref={menuRef}>
                 <button
                     onClick={handleConnect}
-                    className={`px-4 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-2 ${mounted && isConnected
+                    className={`cursor-pointer px-4 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-2 ${mounted && isConnected
                         ? "bg-stealth-surface border border-stealth-border text-stealth-text hover:bg-stealth-hover"
                         : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20"
                         }`}
@@ -105,7 +109,7 @@ export default function Header() {
                                     </span>
                                     <button
                                         onClick={handleCopyAddress}
-                                        className="p-1.5 rounded-md hover:bg-stealth-bg text-stealth-muted hover:text-stealth-accent transition-colors"
+                                        className="p-1.5 cursor-pointer rounded-md hover:bg-stealth-bg text-stealth-muted hover:text-stealth-accent transition-colors"
                                         title="Copy address"
                                     >
                                         {copied ? (
@@ -119,6 +123,19 @@ export default function Header() {
                                         )}
                                     </button>
                                 </div>
+
+                                {balanceData && (() => {
+                                    return (
+                                        <div className="mt-4 mb-2 items-baseline">
+                                            <span className="text-[10px] text-stealth-muted uppercase tracking-wider font-semibold block mb-1">
+                                                My Balance
+                                            </span>
+                                            <span className="font-mono text-sm text-stealth-text" title={address}>
+                                                {formatBalance(balanceData.value)} {balanceData.symbol}
+                                            </span>
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             <div className="pt-1">
@@ -127,7 +144,7 @@ export default function Header() {
                                         disconnect();
                                         setIsMenuOpen(false);
                                     }}
-                                    className="w-full text-left px-4 py-2 text-sm text-stealth-red hover:bg-stealth-red/10 transition-colors flex items-center gap-2"
+                                    className="cursor-pointer w-full text-left px-4 py-2 text-sm text-stealth-red hover:bg-stealth-red/10 transition-colors flex items-center gap-2"
                                 >
                                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />

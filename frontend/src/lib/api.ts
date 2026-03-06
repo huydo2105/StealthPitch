@@ -397,6 +397,27 @@ export async function listWalletDeals(walletAddress: string): Promise<DealRoom[]
     return res.json();
 }
 
+/** Call this after wagmi's isConfirmed fires to update backend deal status.
+ *  action="create"  → records the tx hash (status stays "created")
+ *  action="deposit" → records the tx hash and advances status to "funded"
+ */
+export async function confirmTx(
+    roomId: string,
+    action: "create" | "deposit",
+    txHash: string
+): Promise<DealRoom> {
+    const res = await fetch(`${API_BASE}/api/deal/${roomId}/confirm_tx`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, tx_hash: txHash, chain_id: 127823 }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "confirm_tx failed" }));
+        throw new Error(err.detail || "confirm_tx failed");
+    }
+    return res.json();
+}
+
 export async function negotiateDeal(
     roomId: string,
     query: string,

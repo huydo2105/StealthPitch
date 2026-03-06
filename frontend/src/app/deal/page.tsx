@@ -11,10 +11,21 @@ import {
     getDeal,
     ingestForDeal,
     listWalletDeals,
+    confirmTx,
     DealRoom,
 } from "@/lib/api";
+import {
+    useCreateDealOnChain,
+    useDepositFunds,
+} from "@/lib/useNDAIEscrow";
+import { TxBadge } from "@/components/TxBadge";
+import { OnChainPanel } from "@/components/OnChainPanel";
+import { DealHistorySection } from "@/components/DealHistorySection";
+import { NDAI_ESCROW_ADDRESS, EXPLORER_URL } from "@/lib/useNDAIEscrow";
 
 type Phase = "setup" | "creating" | "created" | "joining" | "joined" | "error";
+
+// ── Main component ───────────────────────────────────────────────────
 
 function DealRoomContent() {
     const searchParams = useSearchParams();
@@ -27,6 +38,9 @@ function DealRoomContent() {
     const [phase, setPhase] = useState<Phase>("setup");
     const [error, setError] = useState("");
     const [room, setRoom] = useState<DealRoom | null>(null);
+
+    // Wallet
+    const { address: walletAddress } = useAccount();
 
     // Founder fields
     const [sellerAddress, setSellerAddress] = useState("");
@@ -42,8 +56,36 @@ function DealRoomContent() {
     const [uploadMsg, setUploadMsg] = useState("");
 
     // Deal history
-    const { address: walletAddress } = useAccount();
     const [dealHistory, setDealHistory] = useState<DealRoom[]>([]);
+
+    // On-chain hooks
+    const {
+        createDealOnChain,
+        isPending: isCreatePending,
+        isConfirming: isCreateConfirming,
+        isConfirmed: isCreateConfirmed,
+        isError: isCreateError,
+        error: createError,
+        txHash: createTxHash,
+    } = useCreateDealOnChain();
+
+    const {
+        depositFundsOnChain,
+        isPending: isDepositPending,
+        isConfirming: isDepositConfirming,
+        isConfirmed: isDepositConfirmed,
+        isError: isDepositError,
+        error: depositError,
+        txHash: depositTxHash,
+    } = useDepositFunds();
+
+    // Auto-fill wallet address
+    useEffect(() => {
+        if (walletAddress) {
+            setSellerAddress(walletAddress);
+            setBuyerAddress(walletAddress);
+        }
+    }, [walletAddress]);
 
     useEffect(() => {
         if (!walletAddress) {
@@ -55,7 +97,7 @@ function DealRoomContent() {
                 .then(setDealHistory)
                 .catch(() => setDealHistory([]));
         fetchHistory();
-        const id = setInterval(fetchHistory, 60000); // 1 minute
+        const id = setInterval(fetchHistory, 60000);
         return () => clearInterval(id);
     }, [walletAddress]);
 
@@ -84,6 +126,7 @@ function DealRoomContent() {
         },
     });
 
+    // ── Founder: Create Deal ─────────────────────────────────────────
     const handleCreateDeal = async () => {
         if (!sellerAddress || !threshold) {
             setError("Please fill in all fields");
@@ -92,8 +135,22 @@ function DealRoomContent() {
         setPhase("creating");
         setError("");
         try {
+            // 1. Register deal in backend first to get room_id
             const deal = await createDeal(sellerAddress, parseFloat(threshold));
             setRoom(deal);
+
+            // 2. Register deal on-chain (non-blocking — MetaMask popup)
+            if (walletAddress) {
+                await createDealOnChain(
+                    deal.room_id,
+                    sellerAddress as `0x${string}`,
+                    parseFloat(threshold)
+                ).catch((err) => {
+                    // Log but don't block — backend is source of truth for demo
+                    console.warn("On-chain createDeal failed:", err);
+                });
+            }
+
             setPhase("created");
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : "Failed to create deal");
@@ -101,6 +158,7 @@ function DealRoomContent() {
         }
     };
 
+    // ── Investor: Join & Deposit ─────────────────────────────────────
     const handleJoinDeal = async () => {
         if (!roomIdInput || !buyerAddress || !budget) {
             setError("Please fill in all fields");
@@ -109,8 +167,17 @@ function DealRoomContent() {
         setPhase("joining");
         setError("");
         try {
+            // 1. Join in backend
             const deal = await joinDeal(roomIdInput, buyerAddress, parseFloat(budget));
             setRoom(deal);
+
+            // 2. Deposit funds on-chain via MetaMask
+            if (walletAddress) {
+                await depositFundsOnChain(deal.room_id, parseFloat(budget)).catch((err) => {
+                    console.warn("On-chain depositFunds failed:", err);
+                });
+            }
+
             setPhase("joined");
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : "Failed to join deal");
@@ -128,6 +195,33 @@ function DealRoomContent() {
         }
     };
 
+    // ── On-chain confirmation callbacks ──────────────────────────────
+    // When wagmi confirms the createDeal tx → tell backend to record the hash
+    useEffect(() => {
+        if (isCreateConfirmed && createTxHash && room) {
+            confirmTx(room.room_id, "create", createTxHash).catch((err) =>
+                console.warn("confirm_tx(create) failed:", err)
+            );
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isCreateConfirmed, createTxHash]);
+
+    // When wagmi confirms the depositFunds tx → tell backend to set status=funded
+    useEffect(() => {
+        if (isDepositConfirmed && depositTxHash && room) {
+            confirmTx(room.room_id, "deposit", depositTxHash)
+                .then((updated) => setRoom(updated))   // status becomes "funded"
+                .catch((err) => console.warn("confirm_tx(deposit) failed:", err));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isDepositConfirmed, depositTxHash]);
+
+    const onChainError = isCreateError
+        ? createError?.message
+        : isDepositError
+            ? depositError?.message
+            : null;
+
     return (
         <div className="max-w-2xl mx-auto p-6 space-y-6">
             {/* Header */}
@@ -138,7 +232,15 @@ function DealRoomContent() {
             >
                 <h1 className="text-2xl font-bold text-stealth-bright">🤝 Deal Room</h1>
                 <p className="text-sm text-stealth-muted">
-                    NDAI Protocol — Secure invention disclosure with smart contract settlement
+                    NDAI Protocol — Secure invention disclosure with smart contract settlement on{" "}
+                    <a
+                        href="https://shadownet.explorer.etherlink.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-stealth-accent hover:underline"
+                    >
+                        Etherlink
+                    </a>
                 </p>
             </motion.div>
 
@@ -146,7 +248,7 @@ function DealRoomContent() {
             <div className="flex gap-2 p-1 bg-stealth-surface rounded-lg border border-stealth-border w-fit">
                 <button
                     onClick={() => { setRole("founder"); setPhase("setup"); setError(""); }}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${role === "founder"
+                    className={`cursor-pointer px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${role === "founder"
                         ? "bg-stealth-accent text-stealth-bg"
                         : "text-stealth-muted hover:text-stealth-text"
                         }`}
@@ -155,7 +257,7 @@ function DealRoomContent() {
                 </button>
                 <button
                     onClick={() => { setRole("investor"); setPhase("setup"); setError(""); }}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${role === "investor"
+                    className={`cursor-pointer px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${role === "investor"
                         ? "bg-stealth-accent text-stealth-bg"
                         : "text-stealth-muted hover:text-stealth-text"
                         }`}
@@ -179,16 +281,28 @@ function DealRoomContent() {
                                 <h2 className="text-sm font-semibold text-stealth-text">Create Deal Room</h2>
                                 <p className="text-xs text-stealth-muted">
                                     Set your acceptance threshold — the minimum price you&apos;ll accept for disclosing your IP.
+                                    Registering on-chain locks the threshold in the{" "}
+                                    <a
+                                        href={`https://shadownet.explorer.etherlink.com/address/${NDAI_ESCROW_ADDRESS}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-stealth-accent hover:underline"
+                                    >
+                                        NDAIEscrow contract
+                                    </a>.
                                 </p>
                                 <div className="space-y-3">
                                     <div>
-                                        <label className="text-xs text-stealth-muted block mb-1">Wallet Address</label>
+                                        <label className="text-xs text-stealth-muted block mb-1">
+                                            Founder Wallet Address
+                                            {walletAddress && <span className="ml-2 text-stealth-green">● auto-filled</span>}
+                                        </label>
                                         <input
                                             type="text"
-                                            placeholder="0x..."
+                                            placeholder="0x…"
                                             value={sellerAddress}
                                             onChange={(e) => setSellerAddress(e.target.value)}
-                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50"
+                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50 font-mono"
                                         />
                                     </div>
                                     <div>
@@ -208,16 +322,26 @@ function DealRoomContent() {
                                 </div>
                                 <button
                                     onClick={handleCreateDeal}
-                                    className="w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors"
+                                    disabled={!walletAddress}
+                                    className="cursor-pointer w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
-                                    Create Deal Room
+                                    {walletAddress ? "Create Deal Room" : "Connect Wallet First"}
                                 </button>
                             </div>
                         ) : (
                             <div className="p-5 rounded-xl bg-stealth-surface border border-stealth-border space-y-4">
                                 <h2 className="text-sm font-semibold text-stealth-text">Join Deal Room</h2>
                                 <p className="text-xs text-stealth-muted">
-                                    Enter the deal room ID and set your budget cap — the maximum you&apos;ll pay for the invention.
+                                    Enter the deal room ID and set your budget cap — the maximum you&apos;ll pay. Funds will be deposited into the{" "}
+                                    <a
+                                        href={`${EXPLORER_URL}/address/${NDAI_ESCROW_ADDRESS}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-stealth-accent hover:underline"
+                                    >
+                                        NDAIEscrow contract.
+                                    </a>
+
                                 </p>
                                 <div className="space-y-3">
                                     <div>
@@ -231,18 +355,21 @@ function DealRoomContent() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="text-xs text-stealth-muted block mb-1">Wallet Address</label>
+                                        <label className="text-xs text-stealth-muted block mb-1">
+                                            Investor Wallet Address
+                                            {walletAddress && <span className="ml-2 text-stealth-green">● auto-filled</span>}
+                                        </label>
                                         <input
                                             type="text"
-                                            placeholder="0x..."
+                                            placeholder="0x…"
                                             value={buyerAddress}
                                             onChange={(e) => setBuyerAddress(e.target.value)}
-                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50"
+                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50 font-mono"
                                         />
                                     </div>
                                     <div>
                                         <label className="text-xs text-stealth-muted block mb-1">
-                                            Budget Cap (XTZ) — maximum you&apos;ll pay
+                                            Budget Cap (XTZ) — maximum you&apos;ll pay (deposited to escrow)
                                         </label>
                                         <input
                                             type="number"
@@ -257,9 +384,10 @@ function DealRoomContent() {
                                 </div>
                                 <button
                                     onClick={handleJoinDeal}
-                                    className="w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors"
+                                    disabled={!walletAddress}
+                                    className="cursor-pointer w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
-                                    Join & Deposit to Escrow
+                                    {walletAddress ? "Join Deal Room" : "Connect Wallet First"}
                                 </button>
                             </div>
                         )}
@@ -282,7 +410,9 @@ function DealRoomContent() {
                     >
                         <div className="w-10 h-10 border-4 border-stealth-accent/30 border-t-stealth-accent rounded-full animate-spin" />
                         <p className="text-sm text-stealth-muted">
-                            {phase === "creating" ? "Creating deal on Etherlink..." : "Joining deal room..."}
+                            {phase === "creating"
+                                ? "Creating deal room…"
+                                : "Depositing To Escrow and Joining Deal Room…"}
                         </p>
                     </motion.div>
                 )}
@@ -318,10 +448,29 @@ function DealRoomContent() {
                                     <div className="text-stealth-text">{room.documents_ingested ? "✅ Loaded" : "⏳ Pending"}</div>
                                 </div>
                             </div>
+
+                            {/* On-chain tx status */}
+                            <TxBadge
+                                txHash={createTxHash}
+                                isConfirming={isCreateConfirming}
+                                isConfirmed={isCreateConfirmed}
+                                label="Deal registered"
+                            />
+                            {onChainError && (
+                                <p className="text-xs text-stealth-red">⚠ On-chain: {onChainError.slice(0, 120)}</p>
+                            )}
+
                             <p className="text-xs text-stealth-muted mt-2">
-                                Share the Room ID <strong className="text-stealth-accent">{room.room_id}</strong> with your investor.
+                                Share Room ID <strong className="text-stealth-accent">{room.room_id}</strong> with your investor.
                             </p>
                         </div>
+
+                        {/* On-chain read panel */}
+                        {(isCreateConfirmed || isCreatePending) && (
+                            <div className="p-4 rounded-xl bg-stealth-surface border border-stealth-border">
+                                <OnChainPanel roomId={room.room_id} />
+                            </div>
+                        )}
 
                         {/* File Upload */}
                         {!room.documents_ingested && (
@@ -395,7 +544,25 @@ function DealRoomContent() {
                                     <div className="text-stealth-text">{room.documents_ingested ? "✅ Available" : "⏳ Waiting..."}</div>
                                 </div>
                             </div>
+
+                            {/* Deposit tx status */}
+                            <TxBadge
+                                txHash={depositTxHash}
+                                isConfirming={isDepositConfirming}
+                                isConfirmed={isDepositConfirmed}
+                                label="Funds deposited to escrow"
+                            />
+                            {onChainError && (
+                                <p className="text-xs text-stealth-red">⚠ On-chain: {onChainError.slice(0, 120)}</p>
+                            )}
                         </div>
+
+                        {/* On-chain read panel */}
+                        {(isDepositConfirmed || isDepositPending) && (
+                            <div className="p-4 rounded-xl bg-stealth-surface border border-stealth-border">
+                                <OnChainPanel roomId={room.room_id} />
+                            </div>
+                        )}
 
                         {room.documents_ingested ? (
                             <button
@@ -417,7 +584,7 @@ function DealRoomContent() {
                 )}
             </AnimatePresence>
 
-            {/* Tx History */}
+            {/* Tx History (backend) */}
             {room && room.tx_history.length > 0 && (
                 <motion.div
                     initial={{ opacity: 0 }}
@@ -453,79 +620,48 @@ function DealRoomContent() {
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className="p-4 rounded-xl bg-stealth-green/5 border border-stealth-green/20"
+                    className="p-4 rounded-xl bg-stealth-green/5 border border-stealth-green/20 space-y-2"
                 >
                     <p className="text-sm font-semibold text-stealth-green">
-                        Disclosure Unlocked
+                        ✅ Disclosure Unlocked
                     </p>
-                    <p className="text-xs text-stealth-muted mt-1">
-                        Deal accepted: raw disclosure access is now enabled in the negotiation
-                        chat via the post-accept reveal action.
+                    <p className="text-xs text-stealth-muted">
+                        Deal accepted: funds settled on-chain. Raw disclosure access is now enabled.
                     </p>
+                    {/* On-chain settled state */}
+                    <div className="border-t border-stealth-border/50 pt-2">
+                        <OnChainPanel roomId={room.room_id} />
+                    </div>
                     <button
                         onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
-                        className="mt-3 w-full py-2 rounded-lg bg-stealth-green/10 border border-stealth-green/30 text-stealth-green text-sm font-semibold hover:bg-stealth-green/20 transition-colors"
+                        className="mt-1 w-full py-2 rounded-lg bg-stealth-green/10 border border-stealth-green/30 text-stealth-green text-sm font-semibold hover:bg-stealth-green/20 transition-colors"
                     >
                         Open Chat and Reveal IP
                     </button>
                 </motion.div>
             )}
 
+            {room?.status === "exited" && (
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="p-4 rounded-xl bg-stealth-red/5 border border-stealth-red/20 space-y-2"
+                >
+                    <p className="text-sm font-semibold text-stealth-red">
+                        🚫 Deal Exited — Investor Refunded
+                    </p>
+                    <p className="text-xs text-stealth-muted">
+                        Negotiation failed. Funds have been returned to the investor on-chain.
+                    </p>
+                    <div className="border-t border-stealth-border/50 pt-2">
+                        <OnChainPanel roomId={room.room_id} />
+                    </div>
+                </motion.div>
+            )}
+
             {/* Deal History */}
             <DealHistorySection deals={dealHistory} router={router} />
         </div>
-    );
-}
-
-const statusColors: Record<string, string> = {
-    created: "bg-stealth-gold/10 text-stealth-gold",
-    funded: "bg-stealth-accent/10 text-stealth-accent",
-    negotiating: "bg-stealth-accent/10 text-stealth-accent",
-    accepted: "bg-stealth-green/10 text-stealth-green",
-    exited: "bg-stealth-red/10 text-stealth-red",
-    cancelled: "bg-stealth-muted/10 text-stealth-muted",
-};
-
-function DealHistorySection({ deals, router }: { deals: DealRoom[]; router: ReturnType<typeof useRouter> }) {
-    if (deals.length === 0) return null;
-    return (
-        <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="p-4 rounded-xl bg-stealth-surface border border-stealth-border space-y-3"
-        >
-            <h3 className="text-xs font-semibold text-stealth-muted uppercase tracking-wide">
-                Deal History
-            </h3>
-            {deals.map((deal) => (
-                <div
-                    key={deal.room_id}
-                    className="p-3 rounded-lg bg-stealth-bg border border-stealth-border flex items-center gap-3 text-xs"
-                >
-                    <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                            <span className="font-mono text-stealth-accent">{deal.room_id}</span>
-                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${statusColors[deal.status] || ""}`}>
-                                {deal.status}
-                            </span>
-                        </div>
-                        <div className="flex gap-4 text-stealth-muted">
-                            <span>Threshold: {deal.seller_threshold} XTZ</span>
-                            {deal.buyer_budget > 0 && <span>Budget: {deal.buyer_budget} XTZ</span>}
-                            {deal.proposed_price > 0 && (
-                                <span className="text-stealth-text">Price: {deal.proposed_price} XTZ</span>
-                            )}
-                        </div>
-                    </div>
-                    <button
-                        onClick={() => router.push(`/chat?session=${deal.session_id}&deal=${deal.room_id}`)}
-                        className="px-3 py-1.5 rounded-md bg-stealth-hover text-stealth-text hover:bg-stealth-accent/10 hover:text-stealth-accent transition-colors whitespace-nowrap"
-                    >
-                        View Chat →
-                    </button>
-                </div>
-            ))}
-        </motion.div>
     );
 }
 

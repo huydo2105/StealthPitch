@@ -105,3 +105,11 @@ class WalletMessagesResponse(BaseModel):
     session_id: str
     messages: List[Dict]
 
+
+class ConfirmTxRequest(BaseModel):
+    """Frontend posts this after MetaMask confirms an on-chain tx."""
+
+    action: str           # "create" | "deposit"
+    tx_hash: str          # 0x... from wagmi
+    chain_id: int = 127823
+
