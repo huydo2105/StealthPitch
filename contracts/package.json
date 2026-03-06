@@ -7,6 +7,7 @@
         "test": "hardhat test",
         "deploy:local": "hardhat run scripts/deploy.js --network localhost",
         "deploy:etherlink": "hardhat run scripts/deploy.js --network etherlinkTestnet",
+        "verify:etherlink": "hardhat run scripts/verify.js --network etherlinkTestnet",
         "node": "hardhat node"
     },
     "devDependencies": {

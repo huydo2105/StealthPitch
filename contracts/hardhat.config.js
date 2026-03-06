@@ -16,6 +16,21 @@ module.exports = {
             url: "http://127.0.0.1:8545",
         },
     },
+    etherscan: {
+        apiKey: {
+            etherlinkTestnet: "empty",
+        },
+        customChains: [
+            {
+                network: "etherlinkTestnet",
+                chainId: 127823,
+                urls: {
+                    apiURL: "https://shadownet.explorer.etherlink.com/api",
+                    browserURL: "https://shadownet.explorer.etherlink.com",
+                },
+            },
+        ],
+    },
     paths: {
         sources: "./contracts",
         artifacts: "./artifacts",

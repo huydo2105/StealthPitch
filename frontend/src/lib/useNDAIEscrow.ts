@@ -21,138 +21,13 @@ import {
 } from "wagmi";
 import { parseEther, toBytes, pad, keccak256, toHex } from "viem";
 import { etherlinkShadownet } from "./chains";
-
+import { NDAI_ESCROW_ABI } from "../abis/NDAI_ESCROW";
 // ── Contract config ───────────────────────────────────────────────────
 
 export const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL;
 
 export const NDAI_ESCROW_ADDRESS = process.env.NEXT_PUBLIC_ESCROW_CONTRACT_ADDRESS as `0x${string}`;
 
-export const NDAI_ESCROW_ABI = [
-    // createDeal(bytes32 _dealId, address payable _seller, uint256 _threshold)
-    {
-        name: "createDeal",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [
-            { name: "_dealId", type: "bytes32" },
-            { name: "_seller", type: "address" },
-            { name: "_threshold", type: "uint256" },
-        ],
-        outputs: [],
-    },
-    // depositFunds(bytes32 _dealId) payable
-    {
-        name: "depositFunds",
-        type: "function",
-        stateMutability: "payable",
-        inputs: [{ name: "_dealId", type: "bytes32" }],
-        outputs: [],
-    },
-    // acceptDeal(bytes32 _dealId, uint256 _agreedPrice)  [onlyTEE]
-    {
-        name: "acceptDeal",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [
-            { name: "_dealId", type: "bytes32" },
-            { name: "_agreedPrice", type: "uint256" },
-        ],
-        outputs: [],
-    },
-    // exitDeal(bytes32 _dealId)  [onlyTEE]
-    {
-        name: "exitDeal",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [{ name: "_dealId", type: "bytes32" }],
-        outputs: [],
-    },
-    // cancelDeal(bytes32 _dealId)
-    {
-        name: "cancelDeal",
-        type: "function",
-        stateMutability: "nonpayable",
-        inputs: [{ name: "_dealId", type: "bytes32" }],
-        outputs: [],
-    },
-    // getDeal(bytes32 _dealId) view returns (Deal)
-    {
-        name: "getDeal",
-        type: "function",
-        stateMutability: "view",
-        inputs: [{ name: "_dealId", type: "bytes32" }],
-        outputs: [
-            {
-                name: "",
-                type: "tuple",
-                components: [
-                    { name: "dealId", type: "bytes32" },
-                    { name: "seller", type: "address" },
-                    { name: "buyer", type: "address" },
-                    { name: "threshold", type: "uint256" },
-                    { name: "budgetCap", type: "uint256" },
-                    { name: "depositedAmount", type: "uint256" },
-                    { name: "agreedPrice", type: "uint256" },
-                    { name: "status", type: "uint8" },
-                    { name: "createdAt", type: "uint256" },
-                    { name: "settledAt", type: "uint256" },
-                ],
-            },
-        ],
-    },
-    // getDealStatus(bytes32 _dealId) view returns (uint8)
-    {
-        name: "getDealStatus",
-        type: "function",
-        stateMutability: "view",
-        inputs: [{ name: "_dealId", type: "bytes32" }],
-        outputs: [{ name: "", type: "uint8" }],
-    },
-    // Events
-    {
-        name: "DealCreated",
-        type: "event",
-        inputs: [
-            { name: "dealId", type: "bytes32", indexed: true },
-            { name: "seller", type: "address", indexed: true },
-            { name: "threshold", type: "uint256", indexed: false },
-            { name: "timestamp", type: "uint256", indexed: false },
-        ],
-    },
-    {
-        name: "FundsDeposited",
-        type: "event",
-        inputs: [
-            { name: "dealId", type: "bytes32", indexed: true },
-            { name: "buyer", type: "address", indexed: true },
-            { name: "amount", type: "uint256", indexed: false },
-            { name: "budgetCap", type: "uint256", indexed: false },
-        ],
-    },
-    {
-        name: "DealAccepted",
-        type: "event",
-        inputs: [
-            { name: "dealId", type: "bytes32", indexed: true },
-            { name: "seller", type: "address", indexed: true },
-            { name: "buyer", type: "address", indexed: true },
-            { name: "agreedPrice", type: "uint256", indexed: false },
-            { name: "refundedExcess", type: "uint256", indexed: false },
-            { name: "timestamp", type: "uint256", indexed: false },
-        ],
-    },
-    {
-        name: "DealExited",
-        type: "event",
-        inputs: [
-            { name: "dealId", type: "bytes32", indexed: true },
-            { name: "buyer", type: "address", indexed: true },
-            { name: "refundedAmount", type: "uint256", indexed: false },
-            { name: "timestamp", type: "uint256", indexed: false },
-        ],
-    },
-] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -166,11 +41,8 @@ export function roomIdToBytes32(roomId: string): `0x${string}` {
     return keccak256(toHex(toBytes(roomId)));
 }
 
-/** Explorer base URL */
-export const ETHERLINK_EXPLORER = "https://shadownet.explorer.etherlink.com";
-
 export function explorerTxUrl(txHash: string): string {
-    return `${ETHERLINK_EXPLORER}/tx/${txHash}`;
+    return `${EXPLORER_URL}/tx/${txHash}`;
 }
 
 // ── Deal status enum (mirrors Solidity) ──────────────────────────────

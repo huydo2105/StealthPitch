@@ -4,6 +4,7 @@
  */
 
 import { getSupabaseBrowserClient } from "@/lib/supabase";
+import { etherlinkShadownet } from "./chains";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -409,7 +410,7 @@ export async function confirmTx(
     const res = await fetch(`${API_BASE}/api/deal/${roomId}/confirm_tx`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, tx_hash: txHash, chain_id: 127823 }),
+        body: JSON.stringify({ action, tx_hash: txHash, chain_id: etherlinkShadownet.id }),
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "confirm_tx failed" }));
