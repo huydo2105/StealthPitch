@@ -109,7 +109,7 @@ class BlockchainClient:
             {
                 "from": self._account.address,
                 "nonce": self._w3.eth.get_transaction_count(self._account.address),
-                "gas": 300000,
+                "gas": 1000000,
                 "gasPrice": self._w3.eth.gas_price,
                 "chainId": ETHERLINK_CHAIN_ID,
                 "value": value,

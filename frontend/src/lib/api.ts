@@ -333,6 +333,38 @@ export function subscribeToSessionMessages(
     };
 }
 
+export function subscribeToDealRoom(
+    roomId: string,
+    onUpdate: (room: DealRoom) => void
+): () => void {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+        return () => {
+            // no-op
+        };
+    }
+
+    const channel = supabase
+        .channel(`deal_rooms_${roomId}`)
+        .on(
+            "postgres_changes",
+            {
+                event: "UPDATE",
+                schema: "public",
+                table: "deal_rooms",
+                filter: `room_id=eq.${roomId}`,
+            },
+            (payload) => {
+                onUpdate(payload.new as DealRoom);
+            }
+        )
+        .subscribe();
+
+    return () => {
+        supabase.removeChannel(channel);
+    };
+}
+
 export async function getAttestation(): Promise<AttestationResponse> {
     const res = await fetch(`${API_BASE}/api/attestation`);
     if (!res.ok) throw new Error("Attestation fetch failed");

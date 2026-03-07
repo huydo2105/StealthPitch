@@ -70,6 +70,7 @@ export default function DealActionButtons({
     const canExit =
         isInvestor && currentPrice > 0 && !dealOutcome && (room.status === "funded" || room.status === "negotiating");
     const canCancel = room.status === "created" && !dealOutcome && isSeller;
+    const canUnlock = room.status === "accepted" && !dealOutcome && isInvestor;
 
     return (
         <div className="px-4 pb-4">
@@ -147,11 +148,11 @@ export default function DealActionButtons({
             </div>
 
             {/* Reveal (post-accept) */}
-            {room.status === "accepted" && (
+            {canUnlock && (
                 <button
                     onClick={onReveal}
                     disabled={revealLoading}
-                    className="mt-2 w-full py-2 rounded-lg bg-stealth-gold/10 border border-stealth-gold/20 text-stealth-gold text-sm font-semibold hover:bg-stealth-gold/20 disabled:opacity-50"
+                    className="cursor-pointer mt-2 w-full py-2 rounded-lg bg-stealth-gold/10 border border-stealth-gold/20 text-stealth-gold text-sm font-semibold hover:bg-stealth-gold/20 disabled:opacity-50"
                 >
                     {revealLoading ? "Revealing..." : "Unlock Raw Disclosure (Post-Accept)"}
                 </button>

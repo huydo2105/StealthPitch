@@ -102,6 +102,25 @@ QA_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
+UNRESTRICTED_SYSTEM_PROMPT = """\
+You are an expert technical auditor. The deal has been ACCEPTED and the \
+NDA restrictions are LIFTED.
+
+Answer the investor's questions fully and disclose any requested technical \
+details, formulas, architectures, and numerical constants based strictly on the \
+provided context. Do NOT refuse to answer based on confidentiality.
+
+CONTEXT:
+{context}
+"""
+
+UNRESTRICTED_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        SystemMessagePromptTemplate.from_template(UNRESTRICTED_SYSTEM_PROMPT),
+        HumanMessagePromptTemplate.from_template("{question}"),
+    ]
+)
+
 
 # ---------------------------------------------------------------------------
 # Custom Google GenAI Embeddings Wrapper
@@ -248,7 +267,7 @@ def ingest_documents(file_paths: List[str], room_id: Optional[str] = None, progr
     return len(all_chunks)
 
 
-def get_qa_chain(room_id: Optional[str] = None) -> ConversationalRetrievalChain:
+def get_qa_chain(room_id: Optional[str] = None, prompt: Any = QA_PROMPT) -> ConversationalRetrievalChain:
     embeddings = _get_embeddings()
     vectorstore = Chroma(
         persist_directory=CHROMA_DIR,
@@ -275,7 +294,7 @@ def get_qa_chain(room_id: Optional[str] = None) -> ConversationalRetrievalChain:
         retriever=retriever,
         memory=memory,
         return_source_documents=True,
-        combine_docs_chain_kwargs={"prompt": QA_PROMPT},
+        combine_docs_chain_kwargs={"prompt": prompt},
     )
     return chain
 
@@ -334,7 +353,7 @@ def run_chain_query(
 
 def run_unrestricted_query(question: str, room_id: Optional[str] = None) -> dict:
     """Run an unrestricted query used for post-acceptance disclosure demos."""
-    chain = get_qa_chain(room_id=room_id)
+    chain = get_qa_chain(room_id=room_id, prompt=UNRESTRICTED_PROMPT)
     return run_chain_query(chain=chain, question=question, enforce_policy=False)
 
 

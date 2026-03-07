@@ -6,6 +6,7 @@ import {
     fetchChatSessions,
     getDeal,
     subscribeToSessionMessages,
+    subscribeToDealRoom,
     DealRoom,
     ChatMessageRow,
 } from "@/lib/api";
@@ -117,6 +118,15 @@ export function useDealRoom(): UseDealRoomReturn {
         });
         return unsubscribe;
     }, [sessionId]);
+
+    // ── Deal Room Realtime Subscription ────────────────────────────────
+    useEffect(() => {
+        if (!room?.room_id) return;
+        const unsubscribe = subscribeToDealRoom(room.room_id, (updatedRoom) => {
+            setRoom((prev) => (prev ? { ...prev, ...updatedRoom } : updatedRoom));
+        });
+        return unsubscribe;
+    }, [room?.room_id]);
 
     // ── Auto-scroll ────────────────────────────────────────────────────
     useEffect(() => {
