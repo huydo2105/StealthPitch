@@ -103,20 +103,50 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
 
     deal_service.add_negotiation_message(room_id, request.role, request.query)
 
-    try:
-        result = rag_service.negotiate(
-            query=request.query,
-            seller_threshold=room.seller_threshold,
-            buyer_budget=room.buyer_budget,
-            current_proposed_price=room.proposed_price,
-            negotiation_history=[(msg.role, msg.content) for msg in room.negotiation_history],
-            room_id=room_id,
-        )
-        deal_service.add_negotiation_message(room_id, "buyer_agent", result["buyer_agent_response"])
-        deal_service.add_negotiation_message(room_id, "seller_agent", result["seller_agent_response"])
+    # If the investor explicitly proposed a price, apply it directly first.
+    # This ensures the user's typed amount is the one recorded, not the AI's heuristic.
+    if request.propose_price is not None and request.propose_price > 0:
+        deal_service.update_proposed_price(room_id, request.propose_price)
+        current_price = request.propose_price
+    else:
+        current_price = room.proposed_price
 
-        if result.get("suggested_price", 0) > 0:
-            deal_service.update_proposed_price(room_id, result["suggested_price"])
+    try:
+        mentions_agent = "@buyer_agent" in request.query.lower() or "@seller_agent" in request.query.lower()
+
+        if mentions_agent:
+            result = rag_service.negotiate(
+                query=request.query,
+                seller_threshold=room.seller_threshold,
+                buyer_budget=room.buyer_budget,
+                current_proposed_price=current_price,
+                negotiation_history=[(msg.role, msg.content) for msg in room.negotiation_history],
+                room_id=room_id,
+            )
+            buyer_response = result["buyer_agent_response"]
+            seller_response = result["seller_agent_response"]
+            ai_suggested_price = result.get("suggested_price", 0)
+            sources = result.get("sources", [])
+            policy = result.get("policy", {})
+            robustness = result.get("robustness", {})
+        else:
+            buyer_response = "Price proposed directly; AI evaluation skipped at user request."
+            seller_response = "Awaiting manual founder review (AI skipped)."
+            ai_suggested_price = 0
+            sources = []
+            policy = {}
+            robustness = {}
+
+        actual_price = request.propose_price if (request.propose_price is not None and request.propose_price > 0) else ai_suggested_price
+
+        if mentions_agent:
+            deal_service.add_negotiation_message(room_id, "buyer_agent", buyer_response)
+            deal_service.add_negotiation_message(room_id, "seller_agent", seller_response)
+
+        # Only update proposed_price from the AI if the user did NOT specify an explicit price.
+        # When the user specified a price, that already wins; the AI response is informational.
+        if request.propose_price is None and actual_price > 0:
+            deal_service.update_proposed_price(room_id, actual_price)
 
         quote = tee_service.get_tdx_quote()
         deal_chat_session_id: str | None = None
@@ -127,6 +157,7 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
                 participant_role=request.role,
                 title_fallback=room_id,
             )
+            # 1. Save the investor's manual command message
             chat_store.save_message(
                 session_id=deal_chat_session_id,
                 wallet_address=normalized_wallet,
@@ -134,43 +165,55 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
                 content=request.query,
                 metadata={"transport": "http", "path": f"/api/deal/{room_id}/negotiate", "deal_room_id": room_id},
             )
-            chat_store.save_message(
-                session_id=deal_chat_session_id,
-                wallet_address=normalized_wallet,
-                role="agent",
-                content=f"**Buyer Agent Assessment:**\n{result['buyer_agent_response']}",
-                metadata={"agent": "buyer_agent", "deal_room_id": room_id, "suggested_price": result.get("suggested_price", 0)},
-            )
-            chat_store.save_message(
-                session_id=deal_chat_session_id,
-                wallet_address=normalized_wallet,
-                role="agent",
-                content=f"**Seller Agent Response:**\n{result['seller_agent_response']}",
-                metadata={"agent": "seller_agent", "deal_room_id": room_id},
-            )
+            # 2. Add AI messages only if they were actually generated
+            if mentions_agent:
+                chat_store.save_message(
+                    session_id=deal_chat_session_id,
+                    wallet_address=normalized_wallet,
+                    role="agent",
+                    content=f"**Buyer Agent Assessment:**\n{buyer_response}",
+                    metadata={"agent": "buyer_agent", "deal_room_id": room_id, "suggested_price": actual_price},
+                )
+                chat_store.save_message(
+                    session_id=deal_chat_session_id,
+                    wallet_address=normalized_wallet,
+                    role="agent",
+                    content=f"**Seller Agent Response:**\n{seller_response}",
+                    metadata={"agent": "seller_agent", "deal_room_id": room_id},
+                )
+            else:
+                # Still output an invisible or brief system update with the new price if we want,
+                # but the user already sees their message. We'll emit one system message so the UI reacts.
+                chat_store.save_message(
+                    session_id=deal_chat_session_id,
+                    wallet_address=normalized_wallet,
+                    role="system",
+                    content=f"Investor proposed {actual_price} XTZ.",
+                    metadata={"agent": "system", "deal_room_id": room_id, "suggested_price": actual_price},
+                )
 
         payload = {
             "room_id": room_id,
-            "buyer_agent": result["buyer_agent_response"],
-            "seller_agent": result["seller_agent_response"],
-            "suggested_price": result.get("suggested_price", 0),
-            "policy": result.get("policy", {}),
-            "robustness": result.get("robustness", {}),
+            "buyer_agent": buyer_response,
+            "seller_agent": seller_response,
+            "suggested_price": actual_price,
+            "policy": policy,
+            "robustness": robustness,
             "quote_hash": quote.get("report_data", ""),
             "issued_at": datetime.now(timezone.utc).isoformat(),
         }
         signed = build_signed_envelope(payload)
         return {
-            "buyer_agent": result["buyer_agent_response"],
-            "seller_agent": result["seller_agent_response"],
-            "suggested_price": result.get("suggested_price", 0),
-            "threshold_met": result.get("suggested_price", 0) >= room.seller_threshold,
-            "within_budget": result.get("suggested_price", 0) <= room.buyer_budget,
-            "sources": result.get("sources", []),
-            "policy": result.get("policy", {}),
-            "robustness": result.get("robustness", {}),
-            "attestation_quote": quote,
-            "signature": signed["signature"],
+            "buyer_agent": buyer_response,
+            "seller_agent": seller_response,
+            "suggested_price": actual_price,
+            "threshold_met": actual_price >= room.seller_threshold,
+            "within_budget": actual_price <= room.buyer_budget,
+            "sources": sources,
+            "policy": policy,
+            "robustness": robustness,
+            "quote_hash": quote.get("report_data", ""),
+            "tee_signature": signed["signature"],
             "signature_algorithm": signed["signature_algorithm"],
             "signature_payload": signed["signature_payload"],
             "signing_public_key_pem": signed["signing_public_key_pem"],

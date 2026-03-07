@@ -128,14 +128,22 @@ function ChatContent() {
         if (room) {
             // Deal room command routing
             if (room.status === "funded" || room.status === "negotiating") {
-                const proposeMatch = text.match(/^\s*\/propose\s+([\d.]+)/i);
+                // /propose <amount> — investor only
+                const proposeMatch = text.match(/^\s*\/?propose\s+([\d.]+)/i);
                 if (proposeMatch) {
+                    if (participantRole !== "investor") {
+                        addSystemMsg("⚠️ Only the investor can propose a price.");
+                        setLoading(false);
+                        return;
+                    }
+                    const parsedPrice = parseFloat(proposeMatch[1]);
                     try {
                         const result: NegotiateResponse = await negotiateDeal(
                             room.room_id,
                             `Proposing ${proposeMatch[1]} XTZ`,
-                            participantRole || "investor",
-                            walletAddress || undefined
+                            participantRole,
+                            walletAddress || undefined,
+                            parsedPrice
                         );
                         setRoom(result.room);
                         if (result.session_id) setSessionId(result.session_id);
@@ -145,8 +153,28 @@ function ChatContent() {
                     setLoading(false);
                     return;
                 }
-                if (/^\s*\/accept/i.test(text)) { await handleAccept(); setLoading(false); return; }
-                if (/^\s*\/exit/i.test(text)) { await handleExit(); setLoading(false); return; }
+                // /accept — founder only
+                if (/^\s*\/?accept/i.test(text)) {
+                    if (participantRole !== "founder") {
+                        addSystemMsg("⚠️ Only the founder can accept a deal.");
+                        setLoading(false);
+                        return;
+                    }
+                    await handleAccept();
+                    setLoading(false);
+                    return;
+                }
+                // /exit — investor only
+                if (/^\s*\/?exit/i.test(text)) {
+                    if (participantRole !== "investor") {
+                        addSystemMsg("⚠️ Only the investor can exit (refund) a deal.");
+                        setLoading(false);
+                        return;
+                    }
+                    await handleExit();
+                    setLoading(false);
+                    return;
+                }
             }
 
             // Human message (with optional @buyer_agent / @seller_agent RAG trigger)
@@ -234,10 +262,12 @@ function ChatContent() {
             {room ? (
                 <DealActionButtons
                     room={room}
+                    messages={messages}
                     loading={loading}
                     revealLoading={revealLoading}
                     dealOutcome={dealOutcome}
                     walletAddress={walletAddress}
+                    participantRole={participantRole}
                     onAccept={handleAccept}
                     onExit={handleExit}
                     onReveal={handleReveal}

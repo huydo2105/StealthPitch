@@ -83,6 +83,9 @@ class NegotiateRequest(BaseModel):
     query: str
     role: str = "investor"
     wallet_address: Optional[str] = None
+    # Explicit price the investor proposes (parsed from "propose <amount>" command).
+    # When set, this is applied directly to proposed_price before the AI evaluates it.
+    propose_price: Optional[float] = None
 
 
 class RevealRequest(BaseModel):

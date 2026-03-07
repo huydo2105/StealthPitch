@@ -423,12 +423,13 @@ export async function negotiateDeal(
     roomId: string,
     query: string,
     role: string = "investor",
-    walletAddress?: string
+    walletAddress?: string,
+    proposePrice?: number
 ): Promise<NegotiateResponse> {
     const res = await fetch(`${API_BASE}/api/deal/${roomId}/negotiate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, role, wallet_address: walletAddress }),
+        body: JSON.stringify({ query, role, wallet_address: walletAddress, propose_price: proposePrice }),
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "Negotiation failed" }));

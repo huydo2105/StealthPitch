@@ -48,8 +48,21 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CHROMA_DIR = os.path.join(_BACKEND_ROOT, "chroma_db")
-EMBEDDING_MODEL = "gemini-embedding-001"
-LLM_MODEL = "gemini-2.5-flash"
+EMBEDDING_FALLBACKS = [
+    "gemini-embedding-001",
+]
+LLM_FALLBACKS = [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2-flash",
+    "gemini-2-flash-exp",
+    "gemini-2-flash-lite",
+    "gemini-3-flash",
+    "gemini-3-pro",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-pro",
+]
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 SIMULATE_AGENT_ERROR = os.getenv("SIMULATE_AGENT_ERROR", "false").lower() == "true"
@@ -99,18 +112,54 @@ class GoogleGenAIEmbeddings(Embeddings):
         self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=texts,
-        )
-        return [embedding.values for embedding in response.embeddings]
+        for model in EMBEDDING_FALLBACKS:
+            try:
+                response = self.client.models.embed_content(
+                    model=model,
+                    contents=texts,
+                )
+                return [embedding.values for embedding in response.embeddings]
+            except Exception as e:
+                if "429" in str(e).lower() or "quota" in str(e).lower():
+                    logger.warning("Embedding model %s hit quota, falling back...", model)
+                    continue
+                raise e
+        raise Exception("All embedding fallback models failed due to quota.")
 
     def embed_query(self, text: str) -> List[float]:
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=text,
-        )
-        return response.embeddings[0].values
+        for model in EMBEDDING_FALLBACKS:
+            try:
+                response = self.client.models.embed_content(
+                    model=model,
+                    contents=text,
+                )
+                return response.embeddings[0].values
+            except Exception as e:
+                if "429" in str(e).lower() or "quota" in str(e).lower():
+                    logger.warning("Embedding model %s hit quota, falling back...", model)
+                    continue
+                raise e
+        raise Exception("All embedding fallback models failed due to quota.")
+
+
+def _generate_content_with_fallback(client: Any, contents: Any, config: Any = None) -> Any:
+    """Helper to try fallback LLM models if we hit a Quota / 429 error."""
+    last_error = None
+    for model in LLM_FALLBACKS:
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as e:
+            err_str = str(e).lower()
+            if "429" in err_str or "quota" in err_str:
+                logger.warning("Model %s hit quota/rate limit, falling back to next...", model)
+                last_error = e
+                continue
+            raise e
+    raise last_error or Exception("All fallback models failed due to quota/rate constraints.")
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +195,8 @@ class GoogleGenAIChat(BaseChatModel):
             system_instruction=system_instruction,
         )
 
-        response = self.client.models.generate_content(
-            model=self.model_name,
+        response = _generate_content_with_fallback(
+            client=self.client,
             contents=contents,
             config=config,
         )
@@ -162,7 +211,7 @@ class GoogleGenAIChat(BaseChatModel):
 
 
 def _get_embeddings() -> GoogleGenAIEmbeddings:
-    return GoogleGenAIEmbeddings(model=EMBEDDING_MODEL)
+    return GoogleGenAIEmbeddings(model=EMBEDDING_FALLBACKS[0])
 
 
 def ingest_documents(file_paths: List[str], room_id: Optional[str] = None, progress_callback: Any = None) -> int:
@@ -213,7 +262,7 @@ def get_qa_chain(room_id: Optional[str] = None) -> ConversationalRetrievalChain:
         search_kwargs=search_kwargs,
     )
 
-    llm = GoogleGenAIChat(model_name=LLM_MODEL)
+    llm = GoogleGenAIChat(model_name=LLM_FALLBACKS[0])
 
     memory = ConversationBufferMemory(
         memory_key="chat_history",
@@ -380,8 +429,8 @@ def negotiate(
         context=context,
         query=query,
     )
-    buyer_response = client.models.generate_content(
-        model=LLM_MODEL,
+    buyer_response = _generate_content_with_fallback(
+        client=client,
         contents=buyer_prompt,
     )
     buyer_text = buyer_response.text
@@ -405,8 +454,8 @@ def negotiate(
         context=context,
         buyer_assessment=buyer_text,
     )
-    seller_response = client.models.generate_content(
-        model=LLM_MODEL,
+    seller_response = _generate_content_with_fallback(
+        client=client,
         contents=seller_prompt,
     )
     seller_text = seller_response.text
