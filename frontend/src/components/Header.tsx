@@ -1,17 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useAccount, useConnect, useDisconnect, useBalance } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useBalance, useSwitchChain, useChainId } from "wagmi";
 import { metaMask } from "wagmi/connectors";
 import { useEffect, useState, useRef } from "react";
 import { formatBalance } from "@/lib/util";
+import { etherlinkShadownet } from "@/lib/chains";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function Header() {
-    const { address, isConnected } = useAccount();
+    const { address, isConnected, chainId: walletChainId } = useAccount();
     const { connect } = useConnect();
     const { disconnect } = useDisconnect();
+    const { switchChain } = useSwitchChain();
+    const currentChainId = useChainId();
     const [mounted, setMounted] = useState(false);
+
+    const isWrongChain = mounted && isConnected && walletChainId !== etherlinkShadownet.id;
 
     // Fetch balance
     const { data: balanceData } = useBalance({ address });
@@ -40,6 +45,13 @@ export default function Header() {
             connect({ connector: metaMask() });
         }
     };
+
+    // Auto-switch to Etherlink when connected to wrong chain
+    useEffect(() => {
+        if (isWrongChain && switchChain) {
+            switchChain({ chainId: etherlinkShadownet.id });
+        }
+    }, [isWrongChain, switchChain]);
 
     const handleCopyAddress = async () => {
         if (!address) return;
@@ -79,7 +91,7 @@ export default function Header() {
                 >
                     {mounted && isConnected && address ? (
                         <>
-                            <div className="w-2 h-2 rounded-full bg-stealth-green animate-pulse" />
+                            <div className={`w-2 h-2 rounded-full ${isWrongChain ? "bg-amber-500" : "bg-stealth-green"} animate-pulse`} />
                             {formatAddress(address)}
                             <svg className={`w-4 h-4 ml-1 transition-transform ${isMenuOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -124,7 +136,22 @@ export default function Header() {
                                     </button>
                                 </div>
 
-                                {balanceData && (() => {
+                                {isWrongChain && (
+                                    <div className="mt-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                                        <div className="flex items-center gap-1.5 mb-2">
+                                            <span className="text-amber-400 text-xs">⚠</span>
+                                            <span className="text-xs text-amber-400 font-medium">Wrong Network</span>
+                                        </div>
+                                        <button
+                                            onClick={() => switchChain({ chainId: etherlinkShadownet.id })}
+                                            className="cursor-pointer w-full py-1.5 rounded-md bg-amber-500 text-stealth-bg text-xs font-semibold hover:bg-amber-400 transition-colors"
+                                        >
+                                            Switch to Etherlink
+                                        </button>
+                                    </div>
+                                )}
+
+                                {!isWrongChain && balanceData && (() => {
                                     return (
                                         <div className="mt-4 mb-2 items-baseline">
                                             <span className="text-[10px] text-stealth-muted uppercase tracking-wider font-semibold block mb-1">
