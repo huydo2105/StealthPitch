@@ -27,71 +27,16 @@ EXPLORER_URL = "https://shadownet.explorer.etherlink.com/"
 def _load_abi() -> list:
     """Load the NDAIEscrow ABI from the Hardhat artifacts."""
     backend_root = Path(__file__).resolve().parents[2]
-    artifact_path = backend_root / "contracts" / "artifacts" / "NDAIEscrow.sol" / "NDAIEscrow.json"
+    artifact_path = backend_root / "app" / "abis" / "NDAIEscrow.json"
     if artifact_path.exists():
         with open(artifact_path, encoding="utf-8") as file:
             data = json.load(file)
+            # Support both a raw ABI array and a Hardhat artifact object
+            if isinstance(data, list):
+                return data
             return data.get("abi", [])
-    return _MINIMAL_ABI
-
-
-_MINIMAL_ABI = [
-    {
-        "inputs": [{"name": "_dealId", "type": "bytes32"}, {"name": "_seller", "type": "address"}, {"name": "_threshold", "type": "uint256"}],
-        "name": "createDeal",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function",
-    },
-    {
-        "inputs": [{"name": "_dealId", "type": "bytes32"}],
-        "name": "depositFunds",
-        "outputs": [],
-        "stateMutability": "payable",
-        "type": "function",
-    },
-    {
-        "inputs": [{"name": "_dealId", "type": "bytes32"}, {"name": "_agreedPrice", "type": "uint256"}],
-        "name": "acceptDeal",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function",
-    },
-    {
-        "inputs": [{"name": "_dealId", "type": "bytes32"}],
-        "name": "exitDeal",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function",
-    },
-    {
-        "inputs": [{"name": "_dealId", "type": "bytes32"}],
-        "name": "getDeal",
-        "outputs": [
-            {"components": [
-                {"name": "dealId", "type": "bytes32"},
-                {"name": "seller", "type": "address"},
-                {"name": "buyer", "type": "address"},
-                {"name": "threshold", "type": "uint256"},
-                {"name": "budgetCap", "type": "uint256"},
-                {"name": "depositedAmount", "type": "uint256"},
-                {"name": "agreedPrice", "type": "uint256"},
-                {"name": "status", "type": "uint8"},
-                {"name": "createdAt", "type": "uint256"},
-                {"name": "settledAt", "type": "uint256"},
-            ], "name": "", "type": "tuple"}
-        ],
-        "stateMutability": "view",
-        "type": "function",
-    },
-    {
-        "inputs": [{"name": "_dealId", "type": "bytes32"}],
-        "name": "getDealStatus",
-        "outputs": [{"name": "", "type": "uint8"}],
-        "stateMutability": "view",
-        "type": "function",
-    },
-]
+    logger.warning("NDAIEscrow ABI not found at %s", artifact_path)
+    return []
 
 DEAL_STATUS_MAP = {
     0: "Created",

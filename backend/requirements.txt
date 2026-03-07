@@ -16,3 +16,4 @@ requests
 requests-unixsocket
 cryptography
 supabase
+web3
