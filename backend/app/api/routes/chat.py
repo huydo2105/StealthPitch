@@ -61,7 +61,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             content=request.query,
             metadata={"transport": "http", "path": "/api/chat", "deal_room_id": deal_room_id},
         )
-    chain = get_or_create_chain(session_id)
+    chain = get_or_create_chain(session_id, room_id=deal_room_id)
 
     try:
         result = rag_service.run_chain_query(chain=chain, question=request.query, enforce_policy=True)
@@ -149,7 +149,7 @@ async def chat_stream(request: ChatRequest) -> EventSourceResponse:
             content=request.query,
             metadata={"transport": "sse", "path": "/api/chat/stream", "deal_room_id": deal_room_id},
         )
-    chain = get_or_create_chain(session_id)
+    chain = get_or_create_chain(session_id, room_id=deal_room_id)
 
     async def event_generator() -> AsyncGenerator[dict, None]:
         """Yield streamed answer chunks and final metadata event."""

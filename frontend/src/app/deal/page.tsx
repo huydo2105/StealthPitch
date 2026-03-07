@@ -1,244 +1,33 @@
 "use client";
 
-import { useState, useCallback, useEffect, Suspense } from "react";
+import { Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useSearchParams, useRouter } from "next/navigation";
-import { useDropzone } from "react-dropzone";
-import { useAccount } from "wagmi";
-import {
-    createDeal,
-    joinDeal,
-    getDeal,
-    ingestForDeal,
-    listWalletDeals,
-    confirmTx,
-    DealRoom,
-} from "@/lib/api";
-import {
-    useCreateDealOnChain,
-    useDepositFunds,
-} from "@/lib/useNDAIEscrow";
-import { TxBadge } from "@/components/TxBadge";
-import { OnChainPanel } from "@/components/OnChainPanel";
-import { DealHistorySection } from "@/components/DealHistorySection";
-import { NDAI_ESCROW_ADDRESS, EXPLORER_URL } from "@/lib/useNDAIEscrow";
-
-type Phase = "setup" | "creating" | "created" | "joining" | "joined" | "error";
-
-// ── Main component ───────────────────────────────────────────────────
+import { useDealSetup } from "@/hooks/useDealSetup";
+import { FounderForm, InvestorForm } from "@/components/deal/DealSetupForms";
+import { CreatedPanel, JoinedPanel, AcceptedPanel, ExitedPanel, TxHistoryPanel } from "@/components/deal/DealRoomPanels";
+import { DealHistorySection } from "@/components/deal/DealHistorySection";
 
 function DealRoomContent() {
-    const searchParams = useSearchParams();
-    const router = useRouter();
-    const initialRole = searchParams.get("role") || "founder";
-
-    const [role, setRole] = useState<"founder" | "investor">(
-        initialRole as "founder" | "investor"
-    );
-    const [phase, setPhase] = useState<Phase>("setup");
-    const [error, setError] = useState("");
-    const [room, setRoom] = useState<DealRoom | null>(null);
-
-    // Wallet
-    const { address: walletAddress } = useAccount();
-
-    // Founder fields
-    const [sellerAddress, setSellerAddress] = useState("");
-    const [threshold, setThreshold] = useState("");
-
-    // Investor fields
-    const [roomIdInput, setRoomIdInput] = useState("");
-    const [buyerAddress, setBuyerAddress] = useState("");
-    const [budget, setBudget] = useState("");
-
-    // File upload
-    const [uploadPhase, setUploadPhase] = useState<"idle" | "uploading" | "done">("idle");
-    const [uploadMsg, setUploadMsg] = useState("");
-
-    // Deal history
-    const [dealHistory, setDealHistory] = useState<DealRoom[]>([]);
-
-    // On-chain hooks
+    const state = useDealSetup();
     const {
-        createDealOnChain,
-        isPending: isCreatePending,
-        isConfirming: isCreateConfirming,
-        isConfirmed: isCreateConfirmed,
-        isError: isCreateError,
-        error: createError,
-        txHash: createTxHash,
-    } = useCreateDealOnChain();
-
-    const {
-        depositFundsOnChain,
-        isPending: isDepositPending,
-        isConfirming: isDepositConfirming,
-        isConfirmed: isDepositConfirmed,
-        isError: isDepositError,
-        error: depositError,
-        txHash: depositTxHash,
-    } = useDepositFunds();
-
-    // Auto-fill wallet address
-    useEffect(() => {
-        if (walletAddress) {
-            setSellerAddress(walletAddress);
-            setBuyerAddress(walletAddress);
-        }
-    }, [walletAddress]);
-
-    useEffect(() => {
-        if (!walletAddress) {
-            setDealHistory([]);
-            return;
-        }
-        const fetchHistory = () =>
-            listWalletDeals(walletAddress)
-                .then(setDealHistory)
-                .catch(() => setDealHistory([]));
-        fetchHistory();
-        const id = setInterval(fetchHistory, 60000);
-        return () => clearInterval(id);
-    }, [walletAddress]);
-
-    const onDrop = useCallback(
-        async (acceptedFiles: File[]) => {
-            if (!room) return;
-            setUploadPhase("uploading");
-            try {
-                const res = await ingestForDeal(room.room_id, acceptedFiles);
-                setUploadMsg(`${res.files_processed} file(s) → ${res.chunks_created} chunks`);
-                setRoom(res.room);
-                setUploadPhase("done");
-            } catch (err: unknown) {
-                setUploadMsg(err instanceof Error ? err.message : "Upload failed");
-                setUploadPhase("idle");
-            }
-        },
-        [room]
-    );
-
-    const { getRootProps, getInputProps, isDragActive } = useDropzone({
-        onDrop,
-        accept: {
-            "application/pdf": [".pdf"],
-            "text/plain": [".txt"],
-        },
-    });
-
-    // ── Founder: Create Deal ─────────────────────────────────────────
-    const handleCreateDeal = async () => {
-        if (!sellerAddress || !threshold) {
-            setError("Please fill in all fields");
-            return;
-        }
-        setPhase("creating");
-        setError("");
-        try {
-            // 1. Register deal in backend first to get room_id
-            const deal = await createDeal(sellerAddress, parseFloat(threshold));
-            setRoom(deal);
-
-            // 2. Register deal on-chain (non-blocking — MetaMask popup)
-            if (walletAddress) {
-                await createDealOnChain(
-                    deal.room_id,
-                    sellerAddress as `0x${string}`,
-                    parseFloat(threshold)
-                ).catch((err) => {
-                    // Log but don't block — backend is source of truth for demo
-                    console.warn("On-chain createDeal failed:", err);
-                });
-            }
-
-            setPhase("created");
-        } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : "Failed to create deal");
-            setPhase("error");
-        }
-    };
-
-    // ── Investor: Join & Deposit ─────────────────────────────────────
-    const handleJoinDeal = async () => {
-        if (!roomIdInput || !buyerAddress || !budget) {
-            setError("Please fill in all fields");
-            return;
-        }
-        setPhase("joining");
-        setError("");
-        try {
-            // 1. Join in backend
-            const deal = await joinDeal(roomIdInput, buyerAddress, parseFloat(budget));
-            setRoom(deal);
-
-            // 2. Deposit funds on-chain via MetaMask
-            if (walletAddress) {
-                await depositFundsOnChain(deal.room_id, parseFloat(budget)).catch((err) => {
-                    console.warn("On-chain depositFunds failed:", err);
-                });
-            }
-
-            setPhase("joined");
-        } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : "Failed to join deal");
-            setPhase("error");
-        }
-    };
-
-    const refreshRoom = async () => {
-        if (!room) return;
-        try {
-            const updated = await getDeal(room.room_id);
-            setRoom(updated);
-        } catch {
-            // Silently fail
-        }
-    };
-
-    // ── On-chain confirmation callbacks ──────────────────────────────
-    // When wagmi confirms the createDeal tx → tell backend to record the hash
-    useEffect(() => {
-        if (isCreateConfirmed && createTxHash && room) {
-            confirmTx(room.room_id, "create", createTxHash).catch((err) =>
-                console.warn("confirm_tx(create) failed:", err)
-            );
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isCreateConfirmed, createTxHash]);
-
-    // When wagmi confirms the depositFunds tx → tell backend to set status=funded
-    useEffect(() => {
-        if (isDepositConfirmed && depositTxHash && room) {
-            confirmTx(room.room_id, "deposit", depositTxHash)
-                .then((updated) => setRoom(updated))   // status becomes "funded"
-                .catch((err) => console.warn("confirm_tx(deposit) failed:", err));
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isDepositConfirmed, depositTxHash]);
-
-    const onChainError = isCreateError
-        ? createError?.message
-        : isDepositError
-            ? depositError?.message
-            : null;
+        role, setRole, phase, setPhase, error,
+        room, dealHistory, router,
+        sellerAddress, setSellerAddress, threshold, setThreshold,
+        roomIdInput, setRoomIdInput, buyerAddress, setBuyerAddress, budget, setBudget,
+        getRootProps, getInputProps, isDragActive, uploadPhase, uploadMsg,
+        handleCreateDeal, handleJoinDeal, refreshRoom,
+        walletAddress, createTxHash, isCreateConfirming, isCreateConfirmed,
+        depositTxHash, isDepositConfirming, isDepositConfirmed, onChainError,
+    } = state;
 
     return (
         <div className="max-w-2xl mx-auto p-6 space-y-6">
             {/* Header */}
-            <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-2"
-            >
+            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
                 <h1 className="text-2xl font-bold text-stealth-bright">🤝 Deal Room</h1>
                 <p className="text-sm text-stealth-muted">
                     NDAI Protocol — Secure invention disclosure with smart contract settlement on{" "}
-                    <a
-                        href="https://shadownet.explorer.etherlink.com"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-stealth-accent hover:underline"
-                    >
+                    <a href="https://shadownet.explorer.etherlink.com" target="_blank" rel="noopener noreferrer" className="text-stealth-accent hover:underline">
                         Etherlink
                     </a>
                 </p>
@@ -246,418 +35,78 @@ function DealRoomContent() {
 
             {/* Role Toggle */}
             <div className="flex gap-2 p-1 bg-stealth-surface rounded-lg border border-stealth-border w-fit">
-                <button
-                    onClick={() => { setRole("founder"); setPhase("setup"); setError(""); }}
-                    className={`cursor-pointer px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${role === "founder"
-                        ? "bg-stealth-accent text-stealth-bg"
-                        : "text-stealth-muted hover:text-stealth-text"
-                        }`}
-                >
-                    🚀 Founder
-                </button>
-                <button
-                    onClick={() => { setRole("investor"); setPhase("setup"); setError(""); }}
-                    className={`cursor-pointer px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${role === "investor"
-                        ? "bg-stealth-accent text-stealth-bg"
-                        : "text-stealth-muted hover:text-stealth-text"
-                        }`}
-                >
-                    💼 Investor
-                </button>
+                {(["founder", "investor"] as const).map((r) => (
+                    <button
+                        key={r}
+                        onClick={() => { setRole(r); setPhase("setup"); }}
+                        className={`cursor-pointer px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${role === r ? "bg-stealth-accent text-stealth-bg" : "text-stealth-muted hover:text-stealth-text"}`}
+                    >
+                        {r === "founder" ? "🚀 Founder" : "💼 Investor"}
+                    </button>
+                ))}
             </div>
 
             <AnimatePresence mode="wait">
-                {/* ── SETUP PHASE ── */}
+                {/* Setup / Error */}
                 {(phase === "setup" || phase === "error") && (
-                    <motion.div
-                        key="setup"
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -20 }}
-                        className="space-y-4"
-                    >
+                    <motion.div key="setup" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-4">
                         {role === "founder" ? (
-                            <div className="p-5 rounded-xl bg-stealth-surface border border-stealth-border space-y-4">
-                                <h2 className="text-sm font-semibold text-stealth-text">Create Deal Room</h2>
-                                <p className="text-xs text-stealth-muted">
-                                    Set your acceptance threshold — the minimum price you&apos;ll accept for disclosing your IP.
-                                    Registering on-chain locks the threshold in the{" "}
-                                    <a
-                                        href={`${EXPLORER_URL}/address/${NDAI_ESCROW_ADDRESS}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-stealth-accent hover:underline"
-                                    >
-                                        NDAIEscrow contract
-                                    </a>.
-                                </p>
-                                <div className="space-y-3">
-                                    <div>
-                                        <label className="text-xs text-stealth-muted block mb-1">
-                                            Founder Wallet Address
-                                            {walletAddress && <span className="ml-2 text-stealth-green">● auto-filled</span>}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            placeholder="0x…"
-                                            value={sellerAddress}
-                                            onChange={(e) => setSellerAddress(e.target.value)}
-                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50 font-mono"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-stealth-muted block mb-1">
-                                            Acceptance Threshold (XTZ) — minimum acceptable price
-                                        </label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            placeholder="e.g. 5.0"
-                                            value={threshold}
-                                            onChange={(e) => setThreshold(e.target.value)}
-                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50"
-                                        />
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={handleCreateDeal}
-                                    disabled={!walletAddress}
-                                    className="cursor-pointer w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                    {walletAddress ? "Create Deal Room" : "Connect Wallet First"}
-                                </button>
-                            </div>
+                            <FounderForm
+                                sellerAddress={sellerAddress} setSellerAddress={setSellerAddress}
+                                threshold={threshold} setThreshold={setThreshold}
+                                onSubmit={handleCreateDeal} walletAddress={walletAddress}
+                            />
                         ) : (
-                            <div className="p-5 rounded-xl bg-stealth-surface border border-stealth-border space-y-4">
-                                <h2 className="text-sm font-semibold text-stealth-text">Join Deal Room</h2>
-                                <p className="text-xs text-stealth-muted">
-                                    Enter the deal room ID and set your budget cap — the maximum you&apos;ll pay. Funds will be deposited into the{" "}
-                                    <a
-                                        href={`${EXPLORER_URL}/address/${NDAI_ESCROW_ADDRESS}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-stealth-accent hover:underline"
-                                    >
-                                        NDAIEscrow contract.
-                                    </a>
-
-                                </p>
-                                <div className="space-y-3">
-                                    <div>
-                                        <label className="text-xs text-stealth-muted block mb-1">Deal Room ID</label>
-                                        <input
-                                            type="text"
-                                            placeholder="e.g. a1b2c3d4"
-                                            value={roomIdInput}
-                                            onChange={(e) => setRoomIdInput(e.target.value)}
-                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-stealth-muted block mb-1">
-                                            Investor Wallet Address
-                                            {walletAddress && <span className="ml-2 text-stealth-green">● auto-filled</span>}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            placeholder="0x…"
-                                            value={buyerAddress}
-                                            onChange={(e) => setBuyerAddress(e.target.value)}
-                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50 font-mono"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-stealth-muted block mb-1">
-                                            Budget Cap (XTZ) — maximum you&apos;ll pay (deposited to escrow)
-                                        </label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            placeholder="e.g. 10.0"
-                                            value={budget}
-                                            onChange={(e) => setBudget(e.target.value)}
-                                            className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50"
-                                        />
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={handleJoinDeal}
-                                    disabled={!walletAddress}
-                                    className="cursor-pointer w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                    {walletAddress ? "Join Deal Room" : "Connect Wallet First"}
-                                </button>
-                            </div>
+                            <InvestorForm
+                                roomIdInput={roomIdInput} setRoomIdInput={setRoomIdInput}
+                                buyerAddress={buyerAddress} setBuyerAddress={setBuyerAddress}
+                                budget={budget} setBudget={setBudget}
+                                onSubmit={handleJoinDeal} walletAddress={walletAddress}
+                            />
                         )}
-
                         {error && (
-                            <div className="p-3 rounded-lg bg-stealth-red/10 border border-stealth-red/20 text-sm text-stealth-red">
-                                {error}
-                            </div>
+                            <div className="p-3 rounded-lg bg-stealth-red/10 border border-stealth-red/20 text-sm text-stealth-red">{error}</div>
                         )}
                     </motion.div>
                 )}
 
-                {/* ── CREATING / JOINING PHASE ── */}
+                {/* Loading */}
                 {(phase === "creating" || phase === "joining") && (
-                    <motion.div
-                        key="loading"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="flex flex-col items-center gap-3 py-12"
-                    >
+                    <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-3 py-12">
                         <div className="w-10 h-10 border-4 border-stealth-accent/30 border-t-stealth-accent rounded-full animate-spin" />
                         <p className="text-sm text-stealth-muted">
-                            {phase === "creating"
-                                ? "Creating deal room…"
-                                : "Depositing To Escrow and Joining Deal Room…"}
+                            {phase === "creating" ? "Creating deal room…" : "Depositing To Escrow and Joining Deal Room…"}
                         </p>
                     </motion.div>
                 )}
 
-                {/* ── CREATED PHASE (FOUNDER) ── */}
+                {/* Created */}
                 {phase === "created" && room && (
-                    <motion.div
-                        key="created"
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="space-y-4"
-                    >
-                        <div className="p-5 rounded-xl bg-stealth-green/5 border border-stealth-green/20 space-y-3">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-stealth-green animate-pulse" />
-                                <h2 className="text-sm font-semibold text-stealth-green">Deal Room Created</h2>
-                            </div>
-                            <div className="grid grid-cols-2 gap-3 text-xs">
-                                <div>
-                                    <span className="text-stealth-muted">Room ID</span>
-                                    <div className="font-mono text-stealth-accent text-lg">{room.room_id}</div>
-                                </div>
-                                <div>
-                                    <span className="text-stealth-muted">Threshold</span>
-                                    <div className="text-stealth-text">{room.seller_threshold} XTZ</div>
-                                </div>
-                                <div>
-                                    <span className="text-stealth-muted">Status</span>
-                                    <div className="text-stealth-gold uppercase tracking-wide">{room.status}</div>
-                                </div>
-                                <div>
-                                    <span className="text-stealth-muted">Documents</span>
-                                    <div className="text-stealth-text">{room.documents_ingested ? "✅ Loaded" : "⏳ Pending"}</div>
-                                </div>
-                            </div>
-
-                            {/* On-chain tx status */}
-                            <TxBadge
-                                txHash={createTxHash}
-                                isConfirming={isCreateConfirming}
-                                isConfirmed={isCreateConfirmed}
-                                label="Deal registered"
-                            />
-                            {onChainError && (
-                                <p className="text-xs text-stealth-red">⚠ On-chain: {onChainError.slice(0, 120)}</p>
-                            )}
-
-                            <p className="text-xs text-stealth-muted mt-2">
-                                Share Room ID <strong className="text-stealth-accent">{room.room_id}</strong> with your investor.
-                            </p>
-                        </div>
-
-                        {/* On-chain read panel */}
-                        {/* {(isCreateConfirmed || isCreatePending) && (
-                            <div className="p-4 rounded-xl bg-stealth-surface border border-stealth-border">
-                                <OnChainPanel roomId={room.room_id} />
-                            </div>
-                        )} */}
-
-                        {/* File Upload */}
-                        {!room.documents_ingested && (
-                            <div
-                                {...getRootProps()}
-                                className={`p-6 rounded-xl border-2 border-dashed text-center cursor-pointer transition-colors ${isDragActive
-                                    ? "border-stealth-accent/50 bg-stealth-accent/5"
-                                    : "border-stealth-border hover:border-stealth-accent/30"
-                                    }`}
-                            >
-                                <input {...getInputProps()} />
-                                {uploadPhase === "uploading" ? (
-                                    <div className="flex flex-col items-center gap-2">
-                                        <div className="w-8 h-8 border-4 border-stealth-accent/30 border-t-stealth-accent rounded-full animate-spin" />
-                                        <p className="text-sm text-stealth-muted">Encrypting & embedding...</p>
-                                    </div>
-                                ) : uploadPhase === "done" ? (
-                                    <div className="text-sm text-stealth-green">{uploadMsg}</div>
-                                ) : (
-                                    <div className="space-y-1">
-                                        <p className="text-sm text-stealth-text">📄 Drop documents here or click to upload</p>
-                                        <p className="text-xs text-stealth-muted">PDF, TXT — encrypted within TEE</p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {room.documents_ingested && (
-                            <button
-                                onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
-                                className="w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors"
-                            >
-                                Open Negotiation Chat →
-                            </button>
-                        )}
-
-                        <button onClick={refreshRoom} className="text-xs text-stealth-muted hover:text-stealth-accent">
-                            ↻ Refresh status
-                        </button>
-                    </motion.div>
+                    <CreatedPanel
+                        room={room} onChainError={onChainError}
+                        createTxHash={createTxHash} isCreateConfirming={isCreateConfirming} isCreateConfirmed={isCreateConfirmed}
+                        getRootProps={getRootProps} getInputProps={getInputProps} isDragActive={isDragActive}
+                        uploadPhase={uploadPhase} uploadMsg={uploadMsg}
+                        onRefresh={refreshRoom}
+                    />
                 )}
 
-                {/* ── JOINED PHASE (INVESTOR) ── */}
+                {/* Joined */}
                 {phase === "joined" && room && (
-                    <motion.div
-                        key="joined"
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="space-y-4"
-                    >
-                        <div className="p-5 rounded-xl bg-stealth-accent/5 border border-stealth-accent/20 space-y-3">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-stealth-accent animate-pulse" />
-                                <h2 className="text-sm font-semibold text-stealth-accent">Joined Deal Room</h2>
-                            </div>
-                            <div className="grid grid-cols-2 gap-3 text-xs">
-                                <div>
-                                    <span className="text-stealth-muted">Room ID</span>
-                                    <div className="font-mono text-stealth-accent">{room.room_id}</div>
-                                </div>
-                                <div>
-                                    <span className="text-stealth-muted">Your Budget</span>
-                                    <div className="text-stealth-text">{room.buyer_budget} XTZ</div>
-                                </div>
-                                <div>
-                                    <span className="text-stealth-muted">Status</span>
-                                    <div className="text-stealth-gold uppercase tracking-wide">{room.status}</div>
-                                </div>
-                                <div>
-                                    <span className="text-stealth-muted">Documents</span>
-                                    <div className="text-stealth-text">{room.documents_ingested ? "✅ Available" : "⏳ Waiting..."}</div>
-                                </div>
-                            </div>
-
-                            {/* Deposit tx status */}
-                            <TxBadge
-                                txHash={depositTxHash}
-                                isConfirming={isDepositConfirming}
-                                isConfirmed={isDepositConfirmed}
-                                label="Funds deposited to escrow"
-                            />
-                            {onChainError && (
-                                <p className="text-xs text-stealth-red">⚠ On-chain: {onChainError.slice(0, 120)}</p>
-                            )}
-                        </div>
-
-                        {/* On-chain read panel */}
-                        {/* {(isDepositConfirmed || isDepositPending) && (
-                            <div className="p-4 rounded-xl bg-stealth-surface border border-stealth-border">
-                                <OnChainPanel roomId={room.room_id} />
-                            </div>
-                        )} */}
-
-                        {room.documents_ingested ? (
-                            <button
-                                onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
-                                className="w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors"
-                            >
-                                Start Negotiation →
-                            </button>
-                        ) : (
-                            <p className="text-xs text-stealth-muted text-center">
-                                Waiting for founder to upload documents...
-                            </p>
-                        )}
-
-                        <button onClick={refreshRoom} className="text-xs text-stealth-muted hover:text-stealth-accent">
-                            ↻ Refresh status
-                        </button>
-                    </motion.div>
+                    <JoinedPanel
+                        room={room} onChainError={onChainError}
+                        depositTxHash={depositTxHash} isDepositConfirming={isDepositConfirming} isDepositConfirmed={isDepositConfirmed}
+                        onRefresh={refreshRoom}
+                    />
                 )}
             </AnimatePresence>
 
-            {/* Tx History (backend) */}
-            {room && room.tx_history.length > 0 && (
-                <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="p-4 rounded-xl bg-stealth-surface border border-stealth-border space-y-2"
-                >
-                    <h3 className="text-xs font-semibold text-stealth-muted uppercase tracking-wide">
-                        Blockchain Transactions
-                    </h3>
-                    {room.tx_history.map((tx, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                            <span className="text-stealth-accent">●</span>
-                            <span className="text-stealth-text font-mono">{tx.action}</span>
-                            <span className="text-stealth-muted">
-                                {tx.result.status === "simulated" ? "(simulated)" : ""}
-                            </span>
-                            {Boolean(tx.result.explorer_link) && (
-                                <a
-                                    href={tx.result.explorer_link as string}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-stealth-accent hover:underline ml-auto"
-                                >
-                                    View on Explorer ↗
-                                </a>
-                            )}
-                        </div>
-                    ))}
-                </motion.div>
-            )}
+            {/* Settled Panels */}
+            {room?.status === "accepted" && <AcceptedPanel room={room} />}
+            {room?.status === "exited" && <ExitedPanel room={room} />}
 
-            {room?.status === "accepted" && (
-                <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="p-4 rounded-xl bg-stealth-green/5 border border-stealth-green/20 space-y-2"
-                >
-                    <p className="text-sm font-semibold text-stealth-green">
-                        ✅ Disclosure Unlocked
-                    </p>
-                    <p className="text-xs text-stealth-muted">
-                        Deal accepted: funds settled on-chain. Raw disclosure access is now enabled.
-                    </p>
-                    {/* On-chain settled state */}
-                    <div className="border-t border-stealth-border/50 pt-2">
-                        <OnChainPanel roomId={room.room_id} />
-                    </div>
-                    <button
-                        onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
-                        className="mt-1 w-full py-2 rounded-lg bg-stealth-green/10 border border-stealth-green/30 text-stealth-green text-sm font-semibold hover:bg-stealth-green/20 transition-colors"
-                    >
-                        Open Chat and Reveal IP
-                    </button>
-                </motion.div>
-            )}
-
-            {room?.status === "exited" && (
-                <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="p-4 rounded-xl bg-stealth-red/5 border border-stealth-red/20 space-y-2"
-                >
-                    <p className="text-sm font-semibold text-stealth-red">
-                        🚫 Deal Exited — Investor Refunded
-                    </p>
-                    <p className="text-xs text-stealth-muted">
-                        Negotiation failed. Funds have been returned to the investor on-chain.
-                    </p>
-                    <div className="border-t border-stealth-border/50 pt-2">
-                        <OnChainPanel roomId={room.room_id} />
-                    </div>
-                </motion.div>
-            )}
+            {/* Tx History */}
+            {room && <TxHistoryPanel room={room} />}
 
             {/* Deal History */}
             <DealHistorySection deals={dealHistory} router={router} />
@@ -667,13 +116,11 @@ function DealRoomContent() {
 
 export default function DealPage() {
     return (
-        <Suspense
-            fallback={
-                <div className="flex items-center justify-center h-64">
-                    <div className="w-8 h-8 border-4 border-stealth-accent/30 border-t-stealth-accent rounded-full animate-spin" />
-                </div>
-            }
-        >
+        <Suspense fallback={
+            <div className="flex items-center justify-center h-64">
+                <div className="w-8 h-8 border-4 border-stealth-accent/30 border-t-stealth-accent rounded-full animate-spin" />
+            </div>
+        }>
             <DealRoomContent />
         </Suspense>
     );

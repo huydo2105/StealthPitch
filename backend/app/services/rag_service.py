@@ -165,7 +165,7 @@ def _get_embeddings() -> GoogleGenAIEmbeddings:
     return GoogleGenAIEmbeddings(model=EMBEDDING_MODEL)
 
 
-def ingest_documents(file_paths: List[str], progress_callback: Any = None) -> int:
+def ingest_documents(file_paths: List[str], room_id: Optional[str] = None, progress_callback: Any = None) -> int:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
@@ -180,6 +180,10 @@ def ingest_documents(file_paths: List[str], progress_callback: Any = None) -> in
             loader = TextLoader(path, encoding="utf-8")
         docs = loader.load()
         chunks = splitter.split_documents(docs)
+        # Tag every chunk with the deal room so retrieval can be filtered
+        if room_id:
+            for chunk in chunks:
+                chunk.metadata["room_id"] = room_id
         all_chunks.extend(chunks)
         if progress_callback:
             progress_callback(idx + 1, len(file_paths))
@@ -195,15 +199,18 @@ def ingest_documents(file_paths: List[str], progress_callback: Any = None) -> in
     return len(all_chunks)
 
 
-def get_qa_chain() -> ConversationalRetrievalChain:
+def get_qa_chain(room_id: Optional[str] = None) -> ConversationalRetrievalChain:
     embeddings = _get_embeddings()
     vectorstore = Chroma(
         persist_directory=CHROMA_DIR,
         embedding_function=embeddings,
     )
+    search_kwargs: dict = {"k": 6}
+    if room_id:
+        search_kwargs["filter"] = {"room_id": room_id}
     retriever = vectorstore.as_retriever(
         search_type="similarity",
-        search_kwargs={"k": 6},
+        search_kwargs=search_kwargs,
     )
 
     llm = GoogleGenAIChat(model_name=LLM_MODEL)
@@ -224,12 +231,15 @@ def get_qa_chain() -> ConversationalRetrievalChain:
     return chain
 
 
-def has_documents() -> bool:
+def has_documents(room_id: Optional[str] = None) -> bool:
     if not os.path.isdir(CHROMA_DIR):
         return False
     try:
         embeddings = _get_embeddings()
         vs = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+        if room_id:
+            results = vs._collection.get(where={"room_id": room_id}, limit=1)
+            return len(results["ids"]) > 0
         return vs._collection.count() > 0
     except Exception:
         return False
@@ -273,9 +283,9 @@ def run_chain_query(
     }
 
 
-def run_unrestricted_query(question: str) -> dict:
+def run_unrestricted_query(question: str, room_id: Optional[str] = None) -> dict:
     """Run an unrestricted query used for post-acceptance disclosure demos."""
-    chain = get_qa_chain()
+    chain = get_qa_chain(room_id=room_id)
     return run_chain_query(chain=chain, question=question, enforce_policy=False)
 
 
@@ -342,11 +352,15 @@ def negotiate(
     buyer_budget: float,
     current_proposed_price: float,
     negotiation_history: list,
+    room_id: Optional[str] = None,
 ) -> dict:
     """Run dual-agent negotiation: buyer proposes, seller responds."""
     embeddings = _get_embeddings()
     vectorstore = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+    neg_search_kwargs: dict = {"k": 4}
+    if room_id:
+        neg_search_kwargs["filter"] = {"room_id": room_id}
+    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs=neg_search_kwargs)
     docs = retriever.invoke(query)
     context = "\n\n".join([doc.page_content for doc in docs])
     sources = list(set(doc.metadata.get("source", "unknown") for doc in docs))

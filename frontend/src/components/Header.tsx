@@ -1,72 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useAccount, useConnect, useDisconnect, useBalance, useSwitchChain, useChainId } from "wagmi";
-import { metaMask } from "wagmi/connectors";
-import { useEffect, useState, useRef } from "react";
-import { formatBalance } from "@/lib/util";
-import { etherlinkShadownet } from "@/lib/chains";
 import { motion, AnimatePresence } from "framer-motion";
+import { etherlinkShadownet } from "@/lib/chains";
+import { useWalletConnect } from "@/hooks/useWalletConnect";
 
 export default function Header() {
-    const { address, isConnected, chainId: walletChainId } = useAccount();
-    const { connect } = useConnect();
-    const { disconnect } = useDisconnect();
-    const { switchChain } = useSwitchChain();
-    const currentChainId = useChainId();
-    const [mounted, setMounted] = useState(false);
-
-    const isWrongChain = mounted && isConnected && walletChainId !== etherlinkShadownet.id;
-
-    // Fetch balance
-    const { data: balanceData } = useBalance({ address });
-
-    // Dropdown state
-    const [isMenuOpen, setIsMenuOpen] = useState(false);
-    const [copied, setCopied] = useState(false);
-    const menuRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        setMounted(true);
-
-        const handleClickOutside = (event: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-                setIsMenuOpen(false);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, []);
-
-    const handleConnect = () => {
-        if (isConnected) {
-            setIsMenuOpen(!isMenuOpen);
-        } else {
-            connect({ connector: metaMask() });
-        }
-    };
-
-    // Auto-switch to Etherlink when connected to wrong chain
-    useEffect(() => {
-        if (isWrongChain && switchChain) {
-            switchChain({ chainId: etherlinkShadownet.id });
-        }
-    }, [isWrongChain, switchChain]);
-
-    const handleCopyAddress = async () => {
-        if (!address) return;
-        try {
-            await navigator.clipboard.writeText(address);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        } catch (err) {
-            console.error("Failed to copy", err);
-        }
-    };
-
-    const formatAddress = (addr: string) => {
-        return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-    };
+    const {
+        address, isConnected, mounted, isWrongChain,
+        isMenuOpen, setIsMenuOpen, copied,
+        menuRef, handleConnect, handleCopyAddress, formatAddress,
+        switchChain, disconnect, formattedBalance,
+    } = useWalletConnect();
 
     return (
         <header className="shrink-0 h-16 bg-stealth-bg/50 backdrop-blur-md border-b border-stealth-border px-6 flex items-center justify-between z-40 sticky top-0">
@@ -76,17 +21,15 @@ export default function Header() {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                 </div>
-                <div className="text-lg font-bold text-white tracking-tight">
-                    StealthPitch
-                </div>
+                <div className="text-lg font-bold text-white tracking-tight">StealthPitch</div>
             </Link>
 
             <div className="relative" ref={menuRef}>
                 <button
                     onClick={handleConnect}
                     className={`cursor-pointer px-4 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-2 ${mounted && isConnected
-                        ? "bg-stealth-surface border border-stealth-border text-stealth-text hover:bg-stealth-hover"
-                        : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20"
+                            ? "bg-stealth-surface border border-stealth-border text-stealth-text hover:bg-stealth-hover"
+                            : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20"
                         }`}
                 >
                     {mounted && isConnected && address ? (
@@ -151,26 +94,17 @@ export default function Header() {
                                     </div>
                                 )}
 
-                                {!isWrongChain && balanceData && (() => {
-                                    return (
-                                        <div className="mt-4 mb-2 items-baseline">
-                                            <span className="text-[10px] text-stealth-muted uppercase tracking-wider font-semibold block mb-1">
-                                                My Balance
-                                            </span>
-                                            <span className="font-mono text-sm text-stealth-text" title={address}>
-                                                {formatBalance(balanceData.value)} {balanceData.symbol}
-                                            </span>
-                                        </div>
-                                    );
-                                })()}
+                                {formattedBalance && (
+                                    <div className="mt-4 mb-2">
+                                        <span className="text-[10px] text-stealth-muted uppercase tracking-wider font-semibold block mb-1">My Balance</span>
+                                        <span className="font-mono text-sm text-stealth-text">{formattedBalance}</span>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="pt-1">
                                 <button
-                                    onClick={() => {
-                                        disconnect();
-                                        setIsMenuOpen(false);
-                                    }}
+                                    onClick={() => { disconnect(); setIsMenuOpen(false); }}
                                     className="cursor-pointer w-full text-left px-4 py-2 text-sm text-stealth-red hover:bg-stealth-red/10 transition-colors flex items-center gap-2"
                                 >
                                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

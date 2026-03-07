@@ -1,7 +1,8 @@
 import { DealRoom } from "@/lib/api";
 import { motion } from "framer-motion";
+import { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 
-const statusColors: Record<string, string> = {
+const STATUS_COLORS: Record<string, string> = {
     created: "bg-stealth-gold/10 text-stealth-gold",
     funded: "bg-stealth-accent/10 text-stealth-accent",
     negotiating: "bg-stealth-accent/10 text-stealth-accent",
@@ -10,7 +11,7 @@ const statusColors: Record<string, string> = {
     cancelled: "bg-stealth-muted/10 text-stealth-muted",
 };
 
-export function DealHistorySection({ deals, router }: { deals: DealRoom[]; router: any }) {
+export function DealHistorySection({ deals, router }: { deals: DealRoom[]; router: AppRouterInstance }) {
     if (deals.length === 0) return null;
     return (
         <motion.div
@@ -18,9 +19,7 @@ export function DealHistorySection({ deals, router }: { deals: DealRoom[]; route
             animate={{ opacity: 1 }}
             className="p-4 rounded-xl bg-stealth-surface border border-stealth-border space-y-3"
         >
-            <h3 className="text-xs font-semibold text-stealth-muted uppercase tracking-wide">
-                Deal History
-            </h3>
+            <h3 className="text-xs font-semibold text-stealth-muted uppercase tracking-wide">Deal History</h3>
             {deals.map((deal) => (
                 <div
                     key={deal.room_id}
@@ -29,16 +28,14 @@ export function DealHistorySection({ deals, router }: { deals: DealRoom[]; route
                     <div className="flex-1 space-y-1">
                         <div className="flex items-center gap-2">
                             <span className="font-mono text-stealth-accent">{deal.room_id}</span>
-                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${statusColors[deal.status] || ""}`}>
+                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${STATUS_COLORS[deal.status] ?? ""}`}>
                                 {deal.status}
                             </span>
                         </div>
                         <div className="flex gap-4 text-stealth-muted">
                             <span>Threshold: {deal.seller_threshold} XTZ</span>
                             {deal.buyer_budget > 0 && <span>Budget: {deal.buyer_budget} XTZ</span>}
-                            {deal.proposed_price > 0 && (
-                                <span className="text-stealth-text">Price: {deal.proposed_price} XTZ</span>
-                            )}
+                            {deal.proposed_price > 0 && <span className="text-stealth-text">Price: {deal.proposed_price} XTZ</span>}
                         </div>
                     </div>
                     <button

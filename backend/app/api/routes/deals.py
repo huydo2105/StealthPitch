@@ -92,7 +92,7 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
         raise HTTPException(status_code=404, detail=f"Deal room {room_id} not found")
     if room.status.value not in ("funded", "negotiating"):
         raise HTTPException(status_code=400, detail=f"Deal room is in {room.status.value} state — cannot negotiate")
-    if not rag_service.has_documents():
+    if not rag_service.has_documents(room_id=room_id):
         raise HTTPException(status_code=400, detail="No documents ingested yet")
 
     normalized_wallet: str | None = None
@@ -110,6 +110,7 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
             buyer_budget=room.buyer_budget,
             current_proposed_price=room.proposed_price,
             negotiation_history=[(msg.role, msg.content) for msg in room.negotiation_history],
+            room_id=room_id,
         )
         deal_service.add_negotiation_message(room_id, "buyer_agent", result["buyer_agent_response"])
         deal_service.add_negotiation_message(room_id, "seller_agent", result["seller_agent_response"])
@@ -213,30 +214,33 @@ async def send_human_message(room_id: str, request: DealHumanMessageRequest) -> 
 
     # 3. Check if @BuyerAgent or @SellerAgent was mentioned
     msg_lower = request.content.lower()
-    if "@buyer_agent" in msg_lower or "@seller_agent" in msg_lower:
-        if not rag_service.has_documents():
+    mentions_buyer = "@buyer_agent" in msg_lower
+    mentions_seller = "@seller_agent" in msg_lower
+    if mentions_buyer or mentions_seller:
+        agent_role = "buyer_agent" if mentions_buyer else "seller_agent"
+        if not rag_service.has_documents(room_id=room_id):
             # If no docs, agent replies with a canned message
             chat_store.save_message(
                 session_id=session_id,
                 wallet_address=wallet_address,
-                role="agent",
+                role=agent_role,
                 content="I am present, but no documents have been ingested yet. Please ingest the files first.",
-                metadata={"agent": "system", "deal_room_id": room_id},
+                metadata={"agent": agent_role, "deal_room_id": room_id},
             )
             agent_replied = True
         else:
             try:
                 # 4. Agent answers via RAG pipeline (this enforces PolicyGate rules)
-                chain = rag_service.get_qa_chain()
+                chain = rag_service.get_qa_chain(room_id=room_id)
                 result = rag_service.run_chain_query(chain, request.content, [])
-                
+
                 chat_store.save_message(
                     session_id=session_id,
                     wallet_address=wallet_address,
-                    role="agent",
+                    role=agent_role,
                     content=result.get("answer", "I could not generate a response."),
                     metadata={
-                        "agent": "tee_agent",
+                        "agent": agent_role,
                         "deal_room_id": room_id,
                         "sources": result.get("sources", [])
                     },
@@ -305,7 +309,7 @@ async def ingest_for_deal(room_id: str, files: List[UploadFile] = File(...)) -> 
             tmp.close()
             temp_paths.append(tmp.name)
 
-        chunk_count = rag_service.ingest_documents(temp_paths)
+        chunk_count = rag_service.ingest_documents(temp_paths, room_id=room_id)
         deal_service.mark_documents_ingested(room_id)
         return {
             "chunks_created": chunk_count,
@@ -335,7 +339,7 @@ async def reveal_after_accept(room_id: str, request: RevealRequest) -> Dict[str,
         raise HTTPException(status_code=400, detail="No documents available for reveal")
 
     try:
-        result = rag_service.run_unrestricted_query(request.query)
+        result = rag_service.run_unrestricted_query(request.query, room_id=room_id)
         quote = tee_service.get_tdx_quote()
         payload = {
             "room_id": room_id,

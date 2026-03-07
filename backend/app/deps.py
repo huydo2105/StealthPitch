@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import json
-from typing import Dict
+from typing import Dict, Optional
 
 from app.services import rag_service, tee_service
 
 _sessions: Dict[str, object] = {}
 
 
-def get_or_create_chain(session_id: str) -> object:
+def get_or_create_chain(session_id: str, room_id: Optional[str] = None) -> object:
     """Return existing QA chain for a session or create one."""
-    if session_id not in _sessions:
-        _sessions[session_id] = rag_service.get_qa_chain()
-    return _sessions[session_id]
+    cache_key = f"{session_id}::{room_id or ''}"
+    if cache_key not in _sessions:
+        _sessions[cache_key] = rag_service.get_qa_chain(room_id=room_id)
+    return _sessions[cache_key]
 
 
 def build_signed_envelope(payload: dict) -> dict:
