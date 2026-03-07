@@ -55,7 +55,7 @@ function ChatContent() {
             fetchChatMessages(targetSessionId)
                 .then((rows: ChatMessageRow[]) => {
                     const humanAgentRows = rows.filter((r) =>
-                        ["user", "assistant", "system", "founder", "investor", "agent", "buyer_agent", "seller_agent"].includes(r.role)
+                        ["user", "assistant", "system", "founder", "investor", "buyer_agent", "seller_agent"].includes(r.role)
                     );
                     seenMessageIdsRef.current = new Set(humanAgentRows.map((row) => String(row.id)));
                     setMessages(
@@ -99,7 +99,7 @@ function ChatContent() {
     useEffect(() => {
         if (!sessionId) return;
         const unsubscribe = subscribeToSessionMessages(sessionId, (row) => {
-            if (!["user", "assistant", "system", "founder", "investor", "agent", "buyer_agent", "seller_agent"].includes(row.role)) return;
+            if (!["user", "assistant", "system", "founder", "investor", "buyer_agent", "seller_agent"].includes(row.role)) return;
 
             const messageId = String(row.id);
             if (seenMessageIdsRef.current.has(messageId)) {
@@ -200,7 +200,7 @@ function ChatContent() {
                 return;
             }
 
-            // 4. Default: Send human message (and RAG if @Agent is in text)
+            // 4. Default: Send human message (and RAG if @BuyerAgent or @SellerAgent is in text)
             try {
                 if (walletAddress && (participantRole === "founder" || participantRole === "investor")) {
                     // Optimistic UI update

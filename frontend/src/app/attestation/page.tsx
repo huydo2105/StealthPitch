@@ -148,7 +148,7 @@ export default function AttestationPage() {
                         🛡️ Attestation Dashboard
                     </h2>
                     <p className="text-stealth-muted text-sm mt-1">
-                        Intel TDX remote attestation quote via Phala dstack
+                        TEE remote attestation — hardware-backed trust verification
                     </p>
                 </div>
                 <button
@@ -169,7 +169,7 @@ export default function AttestationPage() {
                 <StatusBadge
                     label="Enclave Status"
                     value={health.enclave_status}
-                    color="green"
+                    color={health.enclave_status === "ACTIVE" ? "green" : "gold"}
                 />
                 <StatusBadge
                     label="TCB Status"

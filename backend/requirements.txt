@@ -12,6 +12,7 @@ python-dotenv
 google-genai
 pypdf
 pysqlite3-binary
+requests
 requests-unixsocket
 cryptography
 supabase

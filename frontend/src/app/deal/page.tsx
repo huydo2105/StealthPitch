@@ -283,7 +283,7 @@ function DealRoomContent() {
                                     Set your acceptance threshold — the minimum price you&apos;ll accept for disclosing your IP.
                                     Registering on-chain locks the threshold in the{" "}
                                     <a
-                                        href={`https://shadownet.explorer.etherlink.com/address/${NDAI_ESCROW_ADDRESS}`}
+                                        href={`${EXPLORER_URL}/address/${NDAI_ESCROW_ADDRESS}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="text-stealth-accent hover:underline"
@@ -466,11 +466,11 @@ function DealRoomContent() {
                         </div>
 
                         {/* On-chain read panel */}
-                        {(isCreateConfirmed || isCreatePending) && (
+                        {/* {(isCreateConfirmed || isCreatePending) && (
                             <div className="p-4 rounded-xl bg-stealth-surface border border-stealth-border">
                                 <OnChainPanel roomId={room.room_id} />
                             </div>
-                        )}
+                        )} */}
 
                         {/* File Upload */}
                         {!room.documents_ingested && (
@@ -558,11 +558,11 @@ function DealRoomContent() {
                         </div>
 
                         {/* On-chain read panel */}
-                        {(isDepositConfirmed || isDepositPending) && (
+                        {/* {(isDepositConfirmed || isDepositPending) && (
                             <div className="p-4 rounded-xl bg-stealth-surface border border-stealth-border">
                                 <OnChainPanel roomId={room.room_id} />
                             </div>
-                        )}
+                        )} */}
 
                         {room.documents_ingested ? (
                             <button

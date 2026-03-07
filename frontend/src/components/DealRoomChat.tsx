@@ -7,7 +7,7 @@
  * to Supabase. Supabase realtime broadcasts every INSERT to all subscribers,
  * so both participants see messages instantly without polling.
  *
- * If a message contains @Agent, the backend runs the RAG pipeline (with
+ * If a message contains @Buyer_Agent or @Seller_Agent, the backend runs the RAG pipeline (with
  * full PolicyGate enforcement) and writes the agent reply as a second INSERT,
  * which also arrives via the same Supabase subscription.
  */
@@ -236,7 +236,7 @@ export default function DealRoomChat({
         }
     }, [input, sending, walletAddress, roomId, role, sessionId]);
 
-    const mentionsAgent = input.trim().toLowerCase().includes("@agent");
+    const mentionsAgent = input.trim().toLowerCase().includes("@buyer_agent") || input.trim().toLowerCase().includes("@seller_agent");
 
     // ── Render ─────────────────────────────────────────────────────────────
 
@@ -277,7 +277,7 @@ export default function DealRoomChat({
                                     <p className="text-xs text-stealth-muted">
                                         Start the conversation. Type{" "}
                                         <code className="bg-stealth-hover px-1 rounded text-stealth-accent">
-                                            @Agent
+                                            @Buyer_Agent or @Seller_Agent
                                         </code>{" "}
                                         to ask the TEE Agent.
                                     </p>
@@ -333,7 +333,7 @@ export default function DealRoomChat({
                                     value={input}
                                     onChange={(e) => setInput(e.target.value)}
                                     onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
-                                    placeholder="Message… (type @Agent to ask TEE)"
+                                    placeholder="Message… (type @Buyer_Agent or @Seller_Agent to ask TEE)"
                                     disabled={sending}
                                     className="w-full px-3 py-2 rounded-lg bg-stealth-input border border-stealth-input-border text-sm text-stealth-text placeholder:text-stealth-muted/50 focus:outline-none focus:border-stealth-accent/50 disabled:opacity-40"
                                 />

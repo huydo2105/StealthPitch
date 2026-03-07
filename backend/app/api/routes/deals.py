@@ -211,8 +211,9 @@ async def send_human_message(room_id: str, request: DealHumanMessageRequest) -> 
 
     agent_replied = False
 
-    # 3. Check if @Agent was mentioned
-    if "@agent" in request.content.lower():
+    # 3. Check if @BuyerAgent or @SellerAgent was mentioned
+    msg_lower = request.content.lower()
+    if "@buyer_agent" in msg_lower or "@seller_agent" in msg_lower:
         if not rag_service.has_documents():
             # If no docs, agent replies with a canned message
             chat_store.save_message(

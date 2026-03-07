@@ -69,8 +69,8 @@ class PolicyGate:
             violations.append("POLICY_VIOLATION_CODE_DETECTED")
         if self._matches_any(text, self._FORMULA_PATTERNS):
             violations.append("POLICY_VIOLATION_FORMULA_DETECTED")
-        if self._contains_long_quote(text):
-            violations.append("POLICY_VIOLATION_LONG_QUOTE")
+        # if self._contains_long_quote(text):
+        #     violations.append("POLICY_VIOLATION_LONG_QUOTE")
 
         return violations
 
