@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { explorerTxUrl } from "@/lib/useNDAIEscrow";
-import { DealRoom } from "@/lib/api";
+import { DealRoom, downloadDealDocuments } from "@/lib/api";
 import { ChatMessage } from "@/types/chat";
 
 interface DealActionButtonsProps {
@@ -54,6 +54,8 @@ export default function DealActionButtons({
     const isSeller = walletAddress && room.seller_address.toLowerCase() === walletAddress.toLowerCase();
 
     const [currentPrice, setCurrentPrice] = useState(room.proposed_price);
+    const [downloadLoading, setDownloadLoading] = useState(false);
+    const [downloadError, setDownloadError] = useState<string | null>(null);
 
     useEffect(() => {
         // Find the latest message that contains a suggested price
@@ -147,15 +149,70 @@ export default function DealActionButtons({
                 </button>
             </div>
 
-            {/* Reveal (post-accept) */}
+            {/* Reveal + Download (post-accept, investor only) */}
             {canUnlock && (
-                <button
-                    onClick={onReveal}
-                    disabled={revealLoading}
-                    className="cursor-pointer mt-2 w-full py-2 rounded-lg bg-stealth-gold/10 border border-stealth-gold/20 text-stealth-gold text-sm font-semibold hover:bg-stealth-gold/20 disabled:opacity-50"
-                >
-                    {revealLoading ? "Revealing..." : "Unlock Raw Disclosure (Post-Accept)"}
-                </button>
+                <div className="mt-2 space-y-2">
+                    {/* Reveal Raw Disclosure */}
+                    <button
+                        onClick={onReveal}
+                        disabled={revealLoading}
+                        title="Query the TEE for unrestricted technical disclosure"
+                        className="cursor-pointer w-full py-2.5 rounded-xl bg-stealth-gold/10 border border-stealth-gold/30 text-stealth-gold text-sm font-semibold hover:bg-stealth-gold/20 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                        {revealLoading ? (
+                            <>
+                                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                                </svg>
+                                Unlocking…
+                            </>
+                        ) : (
+                            <>
+                                <span>🔓</span>
+                                Unlock Raw Disclosure
+                            </>
+                        )}
+                    </button>
+
+                    {/* Download Original Documents */}
+                    <button
+                        onClick={async () => {
+                            setDownloadLoading(true);
+                            setDownloadError(null);
+                            try {
+                                await downloadDealDocuments(room.room_id);
+                            } catch (err) {
+                                setDownloadError(err instanceof Error ? err.message : "Download failed");
+                            } finally {
+                                setDownloadLoading(false);
+                            }
+                        }}
+                        disabled={downloadLoading}
+                        title="Download the original uploaded documents as a ZIP archive"
+                        className="cursor-pointer w-full py-2.5 rounded-xl bg-stealth-accent/10 border border-stealth-accent/30 text-stealth-accent text-sm font-semibold hover:bg-stealth-accent/20 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                        {downloadLoading ? (
+                            <>
+                                <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                                </svg>
+                                Preparing ZIP…
+                            </>
+                        ) : (
+                            <>
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" />
+                                </svg>
+                                Download Raw Documents (.zip)
+                            </>
+                        )}
+                    </button>
+                    {downloadError && (
+                        <p className="text-[11px] text-stealth-red text-center mt-1">{downloadError}</p>
+                    )}
+                </div>
             )}
         </div>
     );

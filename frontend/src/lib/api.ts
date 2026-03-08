@@ -548,3 +548,20 @@ export async function sendDealHumanMessage(
     }
     return res.json();
 }
+
+export async function downloadDealDocuments(roomId: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/deal/${roomId}/download`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Download failed" }));
+        throw new Error(err.detail || "Download failed");
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `deal_${roomId}_documents.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}

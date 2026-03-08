@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import io
 import os
+import shutil
 import tempfile
+import zipfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.deps import build_signed_envelope
 from app.repositories.chat_repository import chat_store, is_valid_wallet_address, normalize_wallet_address
 from app.repositories.deal_repository import deal_store
 from app.schemas import ConfirmTxRequest, CreateDealRequest, DealHumanMessageRequest, JoinDealRequest, NegotiateRequest, RevealRequest
-from app.services import deal_service, rag_service, tee_service
+from app.services import deal_service, storage_service, rag_service, tee_service
 
 router = APIRouter(tags=["deals"])
 
@@ -335,7 +339,7 @@ async def exit_deal_endpoint(room_id: str) -> Dict[str, Any]:
 
 @router.post("/api/deal/{room_id}/ingest")
 async def ingest_for_deal(room_id: str, files: List[UploadFile] = File(...)) -> Dict[str, Any]:
-    """Upload files and ingest them for a specific deal room."""
+    """Upload files, ingest into vector store, and persist originals for later download."""
     room = deal_service.get_room(room_id)
     if room is None:
         raise HTTPException(status_code=404, detail=f"Deal room {room_id} not found")
@@ -343,21 +347,47 @@ async def ingest_for_deal(room_id: str, files: List[UploadFile] = File(...)) -> 
         raise HTTPException(status_code=400, detail="No files provided")
 
     temp_paths: List[str] = []
+    use_gcs = storage_service.is_configured()
+
+    # Local fallback directory (used when GCS is not configured)
+    upload_dir = os.path.join(tempfile.gettempdir(), "deal_uploads", room_id)
+    if not use_gcs:
+        os.makedirs(upload_dir, exist_ok=True)
+
     try:
         for upload in files:
-            suffix = os.path.splitext(upload.filename or "doc.txt")[1]
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            filename = upload.filename or "document.bin"
+            suffix = os.path.splitext(filename)[1]
             content = await upload.read()
+
+            if use_gcs:
+                # Persist to Google Cloud Storage
+                try:
+                    storage_service.upload_file(room_id, filename, content)
+                except Exception as gcs_exc:
+                    logger.warning("GCS upload failed, falling back to temp: %s", gcs_exc)
+                    use_gcs = False  # degrade gracefully
+
+            if not use_gcs:
+                # Fallback: local temp directory
+                dest = os.path.join(upload_dir, filename)
+                with open(dest, "wb") as f:
+                    f.write(content)
+
+            # Always create a temp file for RAG ingest
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
             tmp.write(content)
             tmp.close()
             temp_paths.append(tmp.name)
 
         chunk_count = rag_service.ingest_documents(temp_paths, room_id=room_id)
         deal_service.mark_documents_ingested(room_id)
+        storage_backend = "Google Cloud Storage" if use_gcs else "local temp"
         return {
             "chunks_created": chunk_count,
             "files_processed": len(files),
-            "message": f"Successfully ingested {len(files)} file(s) into {chunk_count} chunks.",
+            "message": f"Successfully ingested {len(files)} file(s) into {chunk_count} chunks. Stored in {storage_backend}.",
+            "storage_backend": storage_backend,
             "room": deal_service.room_to_dict(deal_service.get_room(room_id)),
         }
     except Exception as exc:
@@ -404,3 +434,51 @@ async def reveal_after_accept(room_id: str, request: RevealRequest) -> Dict[str,
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Reveal failed: {str(exc)}")
 
+@router.get("/api/deal/{room_id}/download")
+async def download_deal_documents(room_id: str) -> StreamingResponse:
+    """Download all original uploaded documents as a zip (only when deal is accepted)."""
+    room = deal_service.get_room(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Deal room not found")
+    if room.status.value != "accepted":
+        raise HTTPException(status_code=403, detail="Documents are locked until the deal is ACCEPTED.")
+
+    zip_name = f"deal_{room_id}_documents.zip"
+
+    # ── Try GCS first ──────────────────────────────────────────────────
+    if storage_service.is_configured():
+        try:
+            buf = storage_service.download_all_as_zip(room_id)
+            return StreamingResponse(
+                buf,
+                media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+            )
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            logger.warning("GCS download failed, trying local fallback: %s", exc)
+
+    # ── Local temp directory fallback ──────────────────────────────────
+    upload_dir = os.path.join(tempfile.gettempdir(), "deal_uploads", room_id)
+    if not os.path.isdir(upload_dir):
+        raise HTTPException(status_code=404, detail="No documents found for this deal room.")
+
+    local_files = [
+        f for f in os.listdir(upload_dir)
+        if os.path.isfile(os.path.join(upload_dir, f))
+    ]
+    if not local_files:
+        raise HTTPException(status_code=404, detail="No documents found for this deal room.")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for filename in local_files:
+            zf.write(os.path.join(upload_dir, filename), arcname=filename)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
