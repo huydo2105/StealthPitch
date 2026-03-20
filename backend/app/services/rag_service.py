@@ -6,16 +6,21 @@ vector store using the native `google.genai` SDK.
 """
 
 # ── SQLite hot-patch (required in slim Docker images) ────────────────
-__import__("pysqlite3")
-import sys
+import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_TELEMETRY"] = "False"
 
-sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+try:
+    __import__("pysqlite3")
+    import sys
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    pass
 # ─────────────────────────────────────────────────────────────────────
+
 
 import json
 import logging
-import os
-os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import random
 from datetime import datetime, timezone
 from typing import Any, List, Optional
@@ -68,6 +73,11 @@ CHUNK_OVERLAP = 200
 SIMULATE_AGENT_ERROR = os.getenv("SIMULATE_AGENT_ERROR", "false").lower() == "true"
 AGENT_ERROR_RANGE = float(os.getenv("AGENT_ERROR_RANGE", "0.5"))
 
+_AGENT_ERROR_SEED_RAW = os.getenv("AGENT_ERROR_SEED", "").strip()
+AGENT_ERROR_SEED: Optional[int] = int(_AGENT_ERROR_SEED_RAW) if _AGENT_ERROR_SEED_RAW else None
+# If set, noise becomes reproducible across runs (given the same call sequence).
+_NOISE_RNG = random.Random(AGENT_ERROR_SEED) if AGENT_ERROR_SEED is not None else None
+
 _POLICY_GATE = PolicyGate(max_quote_words=5)
 _METRICS_FILE = os.path.join(_BACKEND_ROOT, "metrics", "negotiation_metrics.jsonl")
 
@@ -83,9 +93,9 @@ Answer the investor's questions regarding viability, architecture, and \
 metrics based ONLY on the provided context.
 
 UNDER A CRYPTOGRAPHIC NDA, YOU MUST STRICTLY REFUSE TO:
-  • Output raw code snippets or pseudo-code from the documents.
-  • Reproduce exact formulas, algorithms, or numerical constants.
-  • Provide direct quotes longer than five words from any source document.
+  â€¢ Output raw code snippets or pseudo-code from the documents.
+  â€¢ Reproduce exact formulas, algorithms, or numerical constants.
+  â€¢ Provide direct quotes longer than five words from any source document.
 
 If asked for raw intellectual property, deny the request and cite \
 TEE confidentiality constraints.  You may summarise, paraphrase, and \
@@ -543,7 +553,8 @@ def apply_robustness_controls(
     noise_applied = 0.0
 
     if simulate_error:
-        noise_applied = random.uniform(-AGENT_ERROR_RANGE, AGENT_ERROR_RANGE)
+        rng = _NOISE_RNG or random
+        noise_applied = rng.uniform(-AGENT_ERROR_RANGE, AGENT_ERROR_RANGE)
         suggested_price = max(0.0, suggested_price + noise_applied)
 
     overpayment_prevented = False
@@ -564,4 +575,5 @@ def _log_negotiation_metric(payload: dict) -> None:
     os.makedirs(os.path.dirname(_METRICS_FILE), exist_ok=True)
     with open(_METRICS_FILE, "a", encoding="utf-8") as file:
         file.write(json.dumps(payload) + "\n")
+
 

@@ -1,5 +1,5 @@
-"""
-StealthPitch — Paper Claim Evaluation Harness
+﻿"""
+StealthPitch â€” Paper Claim Evaluation Harness
 =============================================
 Runs lightweight checks for M1-M5 and writes a markdown report.
 """
@@ -18,6 +18,7 @@ from app.main import app
 from app.services import deal_service as dr
 from app.services import rag_service
 from app.services import tee_service
+from app.services.reliability_checks import evaluate_negotiation_reliability
 
 
 REPORT_PATH = Path(__file__).resolve().parents[2] / "evaluation_report.md"
@@ -40,7 +41,7 @@ def run_m1_policy_gate() -> CheckResult:
         "```python\nclass Leak:\n    pass\n```",
         "function exposeIP() { return true; }",
         "x = y + z",
-        "The integral is ∫ x^2 dx",
+        "The integral is âˆ« x^2 dx",
         "\"this is a very long quote copied exactly from source\"",
         "import secret.module",
         "a = b * c",
@@ -48,8 +49,8 @@ def run_m1_policy_gate() -> CheckResult:
         "class InternalModel",
         "output => { raw: true }",
         "f(x)=x+1",
-        "∑ i=1..n",
-        "sqrt variant √x",
+        "âˆ‘ i=1..n",
+        "sqrt variant âˆšx",
         "\"another copied sentence with too many words inside\"",
         "function hidden()",
         "import os",
@@ -162,6 +163,41 @@ def run_m5_security_profile() -> CheckResult:
     )
 
 
+def run_m6_reliability_checks() -> CheckResult:
+    """Validate deterministic reliability checks on representative transcripts."""
+    safe_buyer = "Assessment. Recommended offer. SUGGESTED_PRICE: 6.0"
+    safe_seller = "The offer seems fair given the context."
+    safe = evaluate_negotiation_reliability(
+        mentions_agent=True,
+        buyer_text=safe_buyer,
+        seller_text=safe_seller,
+        suggested_price=6.0,
+        buyer_budget=10.0,
+        seller_threshold=5.0,
+        under_threshold_flag=False,
+        overpayment_prevented_flag=False,
+    )
+
+    leaky_buyer = "My budget cap is 10.0 XTZ. SUGGESTED_PRICE: 6.0"
+    leaky_seller = "Our acceptance threshold is 5.0 XTZ."
+    leaky = evaluate_negotiation_reliability(
+        mentions_agent=True,
+        buyer_text=leaky_buyer,
+        seller_text=leaky_seller,
+        suggested_price=6.0,
+        buyer_budget=10.0,
+        seller_threshold=5.0,
+        under_threshold_flag=False,
+        overpayment_prevented_flag=False,
+    )
+
+    passed = bool(safe.get("passed")) and not bool(leaky.get("passed"))
+    return CheckResult(
+        claim="M6 Deterministic Reliability Checks",
+        passed=passed,
+        details=f"safe_passed={safe.get('passed')}, leaky_passed={leaky.get('passed')}",
+    )
+
 def write_report(results: List[CheckResult]) -> None:
     """Write markdown report to disk."""
     total = len(results)
@@ -193,6 +229,7 @@ def main() -> Tuple[int, int]:
         run_m3_noisy_agent_controls(),
         run_m4_signature_binding(),
         run_m5_security_profile(),
+        run_m6_reliability_checks(),
     ]
     write_report(results)
     passed = len([result for result in results if result.passed])
@@ -202,4 +239,7 @@ def main() -> Tuple[int, int]:
 if __name__ == "__main__":
     passed_count, total_count = main()
     print(f"Evaluation complete: {passed_count}/{total_count} passed. Report -> {REPORT_PATH}")
+
+
+
 

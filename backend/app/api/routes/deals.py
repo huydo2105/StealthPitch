@@ -1,4 +1,4 @@
-"""Deal room and post-acceptance reveal routes."""
+﻿"""Deal room and post-acceptance reveal routes."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.deps import build_signed_envelope
+from app.services.reliability_checks import evaluate_negotiation_reliability
 from app.repositories.chat_repository import chat_store, is_valid_wallet_address, normalize_wallet_address
 from app.repositories.deal_repository import deal_store
 from app.schemas import ConfirmTxRequest, CreateDealRequest, DealHumanMessageRequest, JoinDealRequest, NegotiateRequest, RevealRequest
@@ -76,8 +77,8 @@ async def list_wallet_deals(wallet_address: str) -> List[Dict[str, Any]]:
 async def confirm_tx(room_id: str, request: ConfirmTxRequest) -> Dict[str, Any]:
     """Frontend calls this after MetaMask confirms a wagmi tx.
 
-    action='create'  → records tx hash (status stays 'created').
-    action='deposit' → records tx hash and sets status → 'funded'.
+    action='create'  â†’ records tx hash (status stays 'created').
+    action='deposit' â†’ records tx hash and sets status â†’ 'funded'.
     """
     try:
         room = deal_service.confirm_tx(room_id, request.action, request.tx_hash)
@@ -95,7 +96,7 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
     if room is None:
         raise HTTPException(status_code=404, detail=f"Deal room {room_id} not found")
     if room.status.value not in ("funded", "negotiating"):
-        raise HTTPException(status_code=400, detail=f"Deal room is in {room.status.value} state — cannot negotiate")
+        raise HTTPException(status_code=400, detail=f"Deal room is in {room.status.value} state â€” cannot negotiate")
     if not rag_service.has_documents(room_id=room_id):
         raise HTTPException(status_code=400, detail="No documents ingested yet")
 
@@ -152,6 +153,17 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
         if request.propose_price is None and actual_price > 0:
             deal_service.update_proposed_price(room_id, actual_price)
 
+        reliability = evaluate_negotiation_reliability(
+            mentions_agent=mentions_agent,
+            buyer_text=buyer_response,
+            seller_text=seller_response,
+            suggested_price=actual_price,
+            buyer_budget=room.buyer_budget,
+            seller_threshold=room.seller_threshold,
+            under_threshold_flag=robustness.get("under_threshold_rejected") if isinstance(robustness, dict) else None,
+            overpayment_prevented_flag=robustness.get("overpayment_prevented") if isinstance(robustness, dict) else None,
+        )
+
         quote = tee_service.get_tdx_quote()
         deal_chat_session_id: str | None = None
         if normalized_wallet:
@@ -203,6 +215,7 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
             "suggested_price": actual_price,
             "policy": policy,
             "robustness": robustness,
+            "reliability": reliability,
             "quote_hash": quote.get("report_data", ""),
             "issued_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -216,6 +229,7 @@ async def negotiate_deal(room_id: str, request: NegotiateRequest) -> Dict[str, A
             "sources": sources,
             "policy": policy,
             "robustness": robustness,
+            "reliability": reliability,
             "quote_hash": quote.get("report_data", ""),
             "tee_signature": signed["signature"],
             "signature_algorithm": signed["signature_algorithm"],
@@ -279,7 +293,7 @@ async def send_human_message(room_id: str, request: DealHumanMessageRequest) -> 
             try:
                 # 4. Agent answers via RAG pipeline (this enforces PolicyGate rules)
                 chain = rag_service.get_qa_chain(room_id=room_id)
-                result = rag_service.run_chain_query(chain, request.content, [])
+                result = rag_service.run_chain_query(chain, request.content, enforce_policy=True)
 
                 chat_store.save_message(
                     session_id=session_id,
@@ -408,7 +422,7 @@ async def reveal_after_accept(room_id: str, request: RevealRequest) -> Dict[str,
         raise HTTPException(status_code=404, detail=f"Deal room {room_id} not found")
     if room.status.value != "accepted":
         raise HTTPException(status_code=403, detail="Disclosure locked until deal is ACCEPTED")
-    if not rag_service.has_documents():
+    if not rag_service.has_documents(room_id=room_id):
         raise HTTPException(status_code=400, detail="No documents available for reveal")
 
     try:
@@ -445,7 +459,7 @@ async def download_deal_documents(room_id: str) -> StreamingResponse:
 
     zip_name = f"deal_{room_id}_documents.zip"
 
-    # ── Try GCS first ──────────────────────────────────────────────────
+    # â”€â”€ Try GCS first â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if storage_service.is_configured():
         try:
             buf = storage_service.download_all_as_zip(room_id)
@@ -459,7 +473,7 @@ async def download_deal_documents(room_id: str) -> StreamingResponse:
         except Exception as exc:
             logger.warning("GCS download failed, trying local fallback: %s", exc)
 
-    # ── Local temp directory fallback ──────────────────────────────────
+    # â”€â”€ Local temp directory fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     upload_dir = os.path.join(tempfile.gettempdir(), "deal_uploads", room_id)
     if not os.path.isdir(upload_dir):
         raise HTTPException(status_code=404, detail="No documents found for this deal room.")
@@ -482,3 +496,8 @@ async def download_deal_documents(room_id: str) -> StreamingResponse:
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
     )
+
+
+
+
+
