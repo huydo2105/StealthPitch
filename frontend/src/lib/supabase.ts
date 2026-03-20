@@ -13,6 +13,15 @@ export function getSupabaseBrowserClient(): SupabaseClient | null {
         return null;
     }
 
+    if (typeof window !== "undefined") {
+        console.log("[Supabase] Initializing client with URL:", url);
+        if (anonKey.split(".").length < 3) {
+            console.error("[Supabase] CRITICAL: NEXT_PUBLIC_SUPABASE_ANON_KEY appears truncated! (Expected 3 JWT segments, found " + anonKey.split(".").length + ")");
+        } else {
+            console.log("[Supabase] API Key verification: OK (JWT segments: " + anonKey.split(".").length + ")");
+        }
+    }
+
     _client = createClient(url, anonKey);
     return _client;
 }
