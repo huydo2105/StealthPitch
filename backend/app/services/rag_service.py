@@ -1,21 +1,26 @@
-﻿"""
-StealthPitch â€” RAG Engine
+"""
+StealthPitch — RAG Engine
 ==========================
 LangChain pipeline that connects Google Gemini 2.5 Flash to a ChromaDB
 vector store using the native `google.genai` SDK.
 """
 
-# â”€â”€ SQLite hot-patch (required in slim Docker images) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-__import__("pysqlite3")
-import sys
+# ── SQLite hot-patch (required in slim Docker images) ────────────────
+import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_TELEMETRY"] = "False"
 
-sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+try:
+    __import__("pysqlite3")
+    import sys
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    pass
+# ─────────────────────────────────────────────────────────────────────
+
 
 import json
 import logging
-import os
-os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import random
 from datetime import datetime, timezone
 from typing import Any, List, Optional
