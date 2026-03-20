@@ -1,17 +1,6 @@
-# StealthPitch
+﻿# StealthPitch
 
 Secure invention disclosure using AI agents inside a Trusted Execution Environment (TEE), aligned to NDAI (arXiv:2502.07924v1).
-
-## What Is Implemented Now
-
-- Hard NDA policy enforcement with deterministic server-side blocking/sanitization.
-- Conditional disclosure flow: reveal endpoint is locked until deal is accepted.
-- Dual-agent negotiation with budget cap and threshold checks.
-- Noisy-agent simulation with bounded outcomes and metric logs.
-- Response-level attestation binding: signed payloads + verification metadata.
-- Security profiles (`baseline` / `high-value`) with simulated multi-provider TEE mode.
-- Evaluation harness for M1-M5 with markdown report output.
-- Shared deal-room chat sessions with Supabase Realtime sync for founder/investor.
 
 ## Architecture
 
@@ -35,30 +24,6 @@ Frontend (Next.js) <-> Backend (FastAPI)
    - **ACCEPT**: settlement occurs and reveal path unlocks.
    - **EXIT**: investor refunded and deal exits.
 5. Signed response metadata is returned for verification.
-
-## Project Structure
-
-```text
-backend/
-  app/
-    main.py
-    core/policy_enforcer.py
-    services/rag_service.py
-    services/deal_service.py
-    services/blockchain_service.py
-    services/tee_service.py
-    repositories/chat_repository.py
-    evaluation/evaluate_claims.py
-    db/supabase_schema.sql
-contracts/
-  NDAIEscrow.sol
-frontend/src/
-  app/chat/page.tsx
-  app/deal/page.tsx
-  app/attestation/page.tsx
-  lib/api.ts
-  lib/signature.ts
-```
 
 ## Quick Start
 
@@ -184,8 +149,8 @@ curl http://<VM_PUBLIC_IP>:8000/api/attestation
 
 | Mode | Environment | Enclave Status | TEE Type |
 |---|---|---|---|
-| Intel SGX (Real) | Azure `DC2s_v3` VM | 🟢 ACTIVE | Intel SGX (Azure CVM) |
-| Simulated | Local dev | 🟡 SIMULATED | TDX (Simulated) |
+| Intel SGX (Real) | Azure `DC2s_v3` VM | ðŸŸ¢ ACTIVE | Intel SGX (Azure CVM) |
+| Simulated | Local dev | ðŸŸ¡ SIMULATED | TDX (Simulated) |
 
 The backend auto-detects which mode is available and falls back gracefully.
 
@@ -230,6 +195,7 @@ Generated report: `backend/evaluation_report.md`
 | `SECURITY_PROFILE` | no | `baseline` or `high-value` |
 | `SIMULATE_AGENT_ERROR` | no | enable noisy-agent simulation (`true/false`) |
 | `AGENT_ERROR_RANGE` | no | noise amplitude (float) |
+| `AGENT_ERROR_SEED` | no | reproducible noise seed (int); only used when `SIMULATE_AGENT_ERROR=true` |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -249,3 +215,4 @@ Generated report: `backend/evaluation_report.md`
 | `SUPABASE_ANON_KEY` | yes | Passed as frontend build arg |
 | `EXPLORER_URL` | no | Block explorer URL (default: Etherlink Shadownet) |
 | *(plus all backend vars above)* | | |
+
