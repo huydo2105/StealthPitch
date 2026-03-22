@@ -96,7 +96,7 @@ function DealRoomContent() {
                     <JoinedPanel
                         room={room} onChainError={onChainError}
                         depositTxHash={depositTxHash} isDepositConfirming={isDepositConfirming} isDepositConfirmed={isDepositConfirmed}
-                        onRefresh={refreshRoom}
+                        onRefresh={refreshRoom} setPhase={setPhase}
                     />
                 )}
             </AnimatePresence>

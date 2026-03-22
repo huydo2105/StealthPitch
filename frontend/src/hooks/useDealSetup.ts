@@ -178,13 +178,16 @@ export function useDealSetup(): UseDealSetupReturn {
             const deal = await joinDeal(roomIdInput, buyerAddress, parseFloat(budget));
             setRoom(deal);
             if (walletAddress) {
-                await depositFundsOnChain(deal.room_id, parseFloat(budget))
-                    .catch((err) => console.warn("On-chain depositFunds failed:", err));
+                const tx = await depositFundsOnChain(deal.room_id, parseFloat(budget));
+                if (!tx) {
+                    throw new Error("Transaction rejected or failed to start.");
+                }
             }
             setPhase("joined");
         } catch (err) {
+            console.error("Join Deal error:", err);
             setError(err instanceof Error ? err.message : "Failed to join deal");
-            setPhase("error");
+            setPhase("setup"); // Revert to setup on failure so they can retry
         }
     };
 

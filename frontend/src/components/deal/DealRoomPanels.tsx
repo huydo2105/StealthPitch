@@ -119,12 +119,15 @@ interface JoinedPanelProps {
     isDepositConfirmed: boolean;
     onChainError: string | null;
     onRefresh: () => void;
+    setPhase: (p: "setup" | "creating" | "created" | "joining" | "joined" | "error") => void;
 }
 
 export function JoinedPanel({
-    room, depositTxHash, isDepositConfirming, isDepositConfirmed, onChainError, onRefresh,
+    room, depositTxHash, isDepositConfirming, isDepositConfirmed, onChainError, onRefresh, setPhase,
 }: JoinedPanelProps) {
     const router = useRouter();
+
+    const isFunded = room.status === "funded" || room.status === "negotiating";
 
     return (
         <motion.div key="joined" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
@@ -148,26 +151,47 @@ export function JoinedPanel({
                     </div>
                     <div>
                         <span className="text-stealth-muted">Documents</span>
-                        <div className="text-stealth-text">{room.documents_ingested ? "✅ Available" : "⏳ Waiting..."}</div>
+                        <div className="text-stealth-text">
+                            {room.documents_ingested ? "✅ Ready" : "⏳ Pending"}
+                        </div>
                     </div>
                 </div>
                 <TxBadge txHash={depositTxHash} isConfirming={isDepositConfirming} isConfirmed={isDepositConfirmed} label="Funds deposited to escrow" />
                 {onChainError && <p className="text-xs text-stealth-red">⚠ On-chain: {onChainError.slice(0, 120)}</p>}
             </div>
 
-            {room.documents_ingested ? (
-                <button
-                    onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
-                    className="w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors"
-                >
-                    Start Negotiation →
-                </button>
+            {isFunded ? (
+                room.documents_ingested ? (
+                    <button
+                        onClick={() => router.push(`/chat?session=${room.session_id}&deal=${room.room_id}`)}
+                        className="w-full py-2.5 rounded-lg bg-stealth-accent text-stealth-bg font-semibold text-sm hover:bg-stealth-accent/90 transition-colors"
+                    >
+                        Start Negotiation →
+                    </button>
+                ) : (
+                    <div className="p-3 rounded-lg bg-stealth-surface border border-stealth-border text-center">
+                        <p className="text-xs text-stealth-text">Deposit confirmed! ✅</p>
+                        <p className="text-[10px] text-stealth-muted mt-1">Waiting for founder to upload documents...</p>
+                    </div>
+                )
             ) : (
-                <p className="text-xs text-stealth-muted text-center">Waiting for founder to upload documents...</p>
+                <div className="space-y-3">
+                    <p className="text-xs text-stealth-muted text-center">
+                        {isDepositConfirming ? "Confirming your on-chain deposit..." : "Awaiting on-chain confirmation..."}
+                    </p>
+                    {!isDepositConfirmed && (
+                        <button
+                            onClick={() => setPhase("setup")}
+                            className="w-full py-2 rounded-lg bg-stealth-surface border border-stealth-border text-stealth-text text-xs hover:bg-stealth-border/20 transition-colors"
+                        >
+                            ← Back to Setup (Retry Deposit)
+                        </button>
+                    )}
+                </div>
             )}
 
-            <button onClick={onRefresh} className="text-xs text-stealth-muted hover:text-stealth-accent">
-                ↻ Refresh status
+            <button onClick={onRefresh} className="text-xs text-stealth-muted hover:text-stealth-accent w-full text-center">
+                ↻ Refresh Status
             </button>
         </motion.div>
     );
