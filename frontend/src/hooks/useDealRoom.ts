@@ -66,21 +66,26 @@ export function useDealRoom(): UseDealRoomReturn {
                 })
                 .catch(() => { });
 
+        if (dealId) {
+            getDeal(dealId).then(setRoom).catch(() => setRoom(null));
+        }
+
         fetchChatSessions(walletAddress).then((sessions) => {
-            const session = sessions.find((s) => s.id === sessionFromQuery);
-            if (session?.deal_room_id) {
-                getDeal(session.deal_room_id)
-                    .then(setRoom)
-                    .catch(() => setRoom(null));
-            }
             const sharedSession = sessions.find((s) => s.deal_room_id === dealId);
             if (sharedSession?.id) {
                 void hydrateMessages(sharedSession.id);
                 return;
             }
+            const session = sessions.find((s) => s.id === sessionFromQuery);
+            if (session?.deal_room_id && !dealId) {
+                // Fallback if dealId wasn't in URL
+                getDeal(session.deal_room_id)
+                    .then(setRoom)
+                    .catch(() => setRoom(null));
+            }
         });
 
-        if (sessionFromQuery) {
+        if (sessionFromQuery && !dealId) {
             void hydrateMessages(sessionFromQuery);
         }
     }, [walletAddress, sessionFromQuery, dealId, sessionId]);

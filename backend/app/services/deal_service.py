@@ -252,16 +252,13 @@ def mark_documents_ingested(room_id: str) -> DealRoom:
 
 
 def get_room(room_id: str) -> Optional[DealRoom]:
-    """Get a deal room by ID (in-memory first, then Supabase fallback)."""
-    room = _deals.get(room_id)
-    if room is not None:
-        return room
+    """Get a deal room by ID (Supabase first, then in-memory fallback)."""
     row = deal_store.get_room(room_id)
-    if row is None:
-        return None
-    room = _row_to_room(row)
-    _deals[room_id] = room
-    return room
+    if row is not None:
+        room = _row_to_room(row)
+        _deals[room_id] = room
+        return room
+    return _deals.get(room_id)
 
 
 def get_all_rooms() -> List[DealRoom]:
